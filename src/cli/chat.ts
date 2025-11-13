@@ -81,11 +81,9 @@ export class ChatInterface {
         const response = await this.agent.processRequest(userMessage);
         spinner.stop();
 
-        // Display agent response
-        if (response.message) {
-          Display.agentMessage(response.message);
-        }
-
+        // Le message est déjà affiché par le streaming!
+        // On affiche juste un divider pour séparer
+        console.log(); // Extra line break
         Display.divider();
       } catch (error) {
         spinner.stop();

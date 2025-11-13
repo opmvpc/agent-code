@@ -24,6 +24,23 @@ export const AGENT_TOOLS: Tool[] = [
   {
     type: "function",
     function: {
+      name: "send_message",
+      description: "Send a message to the user to explain what you're doing, provide updates, or share final results. Use this to communicate your progress, explain decisions, or provide summaries.",
+      parameters: {
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to send to the user",
+          },
+        },
+        required: ["message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
       description: "Create or update a file in the virtual filesystem. Supports .js, .ts, .json, .txt, .md, .html, .css files.",
       parameters: {
@@ -151,6 +168,64 @@ export const AGENT_TOOLS: Tool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_todo",
+      description: "Add a task to your internal todo list to track what needs to be done. Use this to organize your work and remember what's left to do.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "The task to add to your todo list",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "complete_todo",
+      description: "Mark a task as completed in your todo list. Use the task text to identify which one.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "The task to mark as complete (must match exactly)",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_todos",
+      description: "View all tasks in your current todo list with their completion status",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "clear_todos",
+      description: "Clear all tasks from your todo list. Use this when starting a new task or when you've completed everything.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
 
 /**
@@ -161,4 +236,3 @@ export interface ToolResult {
   output?: string;
   error?: string;
 }
-

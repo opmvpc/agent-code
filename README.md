@@ -10,9 +10,14 @@
 - 📁 **Virtual Filesystem**: Safe, in-memory filesystem (10MB max)
 - ⚡ **Code Execution**: Sandboxed JS/TS execution with vm2
 - 💬 **Interactive CLI**: Beautiful terminal interface with colors and boxes
+- 🔧 **Native Tool Calls**: Uses OpenRouter's native function calling (not custom JSON!)
+- 🌊 **Real-time Streaming**: See responses and thinking traces as they happen
+- 💬 **Agent Communication**: Agent can send messages to explain its work as it goes
+- ✅ **Internal Todo List**: Agent manages its own task list autonomously
 - 🎯 **Task Planning**: Breaks complex tasks into steps
 - 🔄 **Iterative Debugging**: Agent tries to fix errors automatically
 - 🛡️ **Security**: Sandboxed execution, no external imports allowed
+- 💭 **Thinking Traces**: Watch the AI's reasoning process live (reasoning-enabled models)
 
 ## 🚀 Quick Start
 
@@ -65,10 +70,57 @@ Agent: I'll create a TypeScript file with a Fibonacci calculator...
 - `/project [name]` - Show or set current project name
 - `/save [name]` - Save project to `workspace/` folder (real files!)
 - `/load <name>` - Load project from `workspace/` folder
-- `/stats` - Show agent statistics
+- `/stats` - Show agent statistics (including real-time costs, reasoning tokens, cached tokens)
 - `/reset` - Clear everything and start fresh
 - `/clear` - Clear screen
 - `/exit` - Quit the agent
+
+### Real-time Feedback ✨
+
+The agent provides rich real-time feedback as it works:
+
+- **🔄 Iteration counter** - Shows current step in the agentic loop
+- **💭 Thinking traces** - See the AI's reasoning process as it happens (for reasoning-enabled models)
+- **🌊 Streaming text** - Watch responses appear character by character
+- **🔧 Tool execution** - Live feedback on which tools are being called
+- **💬 Agent messages** - Agent explains what it's doing between actions
+- **✅ Internal todo list** - Agent creates and checks off tasks as it works
+- **✓/✗ Status indicators** - Immediate success/error feedback for each action
+- **📊 Token usage** - Real-time token counts and costs after each LLM call
+
+### How the Agent Works 🤖
+
+When you give the agent a task, it:
+
+1. **Plans** - Creates a todo list of what needs to be done
+2. **Executes** - Works through tasks, using tools (write files, run code, etc.)
+3. **Communicates** - Sends messages to explain progress
+4. **Iterates** - Continues until all tasks are complete
+5. **Summarizes** - Explains what it accomplished
+
+Example workflow:
+```
+You: Create a calculator with tests
+
+Agent:
+✅ add_todo: "Create calculator functions"
+✅ add_todo: "Write unit tests"
+✅ add_todo: "Run tests and verify"
+
+📝 write_file: calculator.js
+🤖 Agent: "I've created the calculator with add, subtract, multiply, divide functions."
+
+✓ complete_todo: "Create calculator functions"
+
+📝 write_file: calculator.test.js
+▶️ execute_code: calculator.test.js
+🤖 Agent: "All tests passing! The calculator is ready to use."
+
+✓ complete_todo: "Write unit tests"
+✓ complete_todo: "Run tests and verify"
+
+🤖 Agent: "Calculator complete with 4 operations and 8 passing tests!"
+```
 
 ### Example Prompts
 

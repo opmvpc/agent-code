@@ -121,9 +121,13 @@ export class OpenRouterClient {
 
       if (process.env.DEBUG === "true") {
         const tokens = response.usage?.total_tokens || "?";
-        const hasTools = message?.tool_calls ? ` | ${message.tool_calls.length} tool(s)` : "";
+        const hasTools = message?.tool_calls
+          ? ` | ${message.tool_calls.length} tool(s)`
+          : "";
         console.log(
-          chalk.gray(`\n[LLM] ${this.model} | ${tokens} tokens${hasTools} | ${duration}ms`)
+          chalk.gray(
+            `\n[LLM] ${this.model} | ${tokens} tokens${hasTools} | ${duration}ms`
+          )
         );
       }
 
@@ -196,12 +200,15 @@ export class OpenRouterClient {
   }
 
   /**
-   * Stream responses (pour le flex d'avoir une réponse progressive 💅)
+   * Stream responses avec tool calls support! 🌊
+   * Yield des objets différents selon le type: content, thinking, tool_calls, usage
    */
   async *chatStream(
     messages: ChatCompletionMessageParam[]
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<any> {
     try {
+      this.requestCount++;
+
       // Build request body (same as chat but with stream: true)
       const requestBody: any = {
         model: this.model,
@@ -210,10 +217,16 @@ export class OpenRouterClient {
         temperature: this.temperature,
         stream: true,
         // Enable usage accounting même en stream
-        usage: {
-          include: true,
+        stream_options: {
+          include_usage: true,
         },
       };
+
+      // Add tools if configured
+      if (this.tools && this.tools.length > 0) {
+        requestBody.tools = this.tools;
+        requestBody.tool_choice = "auto";
+      }
 
       // Add reasoning params if configured
       if (this.reasoning) {
@@ -239,22 +252,90 @@ export class OpenRouterClient {
         requestBody
       );
 
-      let lastChunk: any;
+      // Accumulate tool calls across chunks (they come fragmented)
+      const toolCallsMap: Map<number, any> = new Map();
+      let contentBuffer = "";
 
       for await (const chunk of stream) {
-        lastChunk = chunk;
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) {
-          yield content;
+        // Check for errors in stream
+        if (chunk.error) {
+          yield { type: "error", error: chunk.error };
+          break;
+        }
+
+        const delta = chunk.choices?.[0]?.delta;
+        const finishReason = chunk.choices?.[0]?.finish_reason;
+
+        // Handle tool calls (they come in multiple chunks)
+        if (delta?.tool_calls) {
+          for (const toolCallDelta of delta.tool_calls) {
+            const index = toolCallDelta.index;
+
+            if (!toolCallsMap.has(index)) {
+              // New tool call
+              toolCallsMap.set(index, {
+                id: toolCallDelta.id || "",
+                type: "function",
+                function: {
+                  name: toolCallDelta.function?.name || "",
+                  arguments: toolCallDelta.function?.arguments || "",
+                },
+              });
+            } else {
+              // Append to existing tool call
+              const existing = toolCallsMap.get(index);
+              if (toolCallDelta.id) existing.id = toolCallDelta.id;
+              if (toolCallDelta.function?.name) {
+                existing.function.name += toolCallDelta.function.name;
+              }
+              if (toolCallDelta.function?.arguments) {
+                existing.function.arguments += toolCallDelta.function.arguments;
+              }
+            }
+          }
+        }
+
+        // Handle text content (stream it in real-time!)
+        if (delta?.content) {
+          contentBuffer += delta.content;
+          yield { type: "content", content: delta.content };
+        }
+
+        // Handle thinking/reasoning (some models support this)
+        if ((chunk as any).reasoning_content) {
+          yield { type: "thinking", content: (chunk as any).reasoning_content };
+        }
+
+        // Handle finish
+        if (finishReason) {
+          // Convert accumulated tool calls to array
+          const toolCalls = Array.from(toolCallsMap.values());
+
+          if (toolCalls.length > 0) {
+            yield {
+              type: "tool_calls",
+              tool_calls: toolCalls,
+              content: contentBuffer || null,
+              finish_reason: finishReason,
+            };
+          } else {
+            yield {
+              type: "done",
+              content: contentBuffer || null,
+              finish_reason: finishReason,
+            };
+          }
+        }
+
+        // Handle usage stats (comes at the end)
+        if (chunk.usage) {
+          this.updateUsageStats(chunk.usage);
+          this.totalTokens += chunk.usage.total_tokens || 0;
+          yield { type: "usage", usage: chunk.usage };
         }
       }
-
-      // Update stats from last chunk (contains usage info)
-      if (lastChunk?.usage) {
-        this.updateUsageStats(lastChunk.usage);
-      }
     } catch (error) {
-      throw new Error(`Stream failed: ${error}`);
+      yield { type: "error", error: (error as Error).message };
     }
   }
 

@@ -22,6 +22,7 @@ import { join } from "path";
 import chalk from "chalk";
 import { AGENT_TOOLS } from "../llm/tools.js";
 import { ToolParser, type ParsedToolCall } from "../llm/tool-parser.js";
+import { TodoManager } from "./todo-manager.js";
 
 export interface AgentConfig {
   apiKey: string;
@@ -39,6 +40,7 @@ export class Agent {
   private executor: CodeExecutor;
   private llmClient: OpenRouterClient;
   private toolParser: ToolParser;
+  private todoManager: TodoManager;
   private projectName: string;
 
   constructor(config: AgentConfig) {
@@ -48,6 +50,7 @@ export class Agent {
     this.fileManager = new FileManager(this.vfs);
     this.executor = new CodeExecutor();
     this.toolParser = new ToolParser();
+    this.todoManager = new TodoManager();
 
     // Generate project name (timestamp-based)
     this.projectName = `project_${Date.now()}`;
@@ -66,7 +69,7 @@ export class Agent {
   }
 
   /**
-   * Process user request avec agentic loop! 🔄
+   * Process user request avec agentic loop + STREAMING! 🌊
    */
   async processRequest(userMessage: string): Promise<{ message: string }> {
     // Add user message to memory
@@ -89,7 +92,7 @@ export class Agent {
       });
     }
 
-    // Agentic loop - continue until we get a text response
+    // Agentic loop avec STREAMING! 🌊
     const maxIterations = 10;
     let iterationCount = 0;
     let finalMessage = "";
@@ -97,64 +100,113 @@ export class Agent {
     while (iterationCount < maxIterations) {
       iterationCount++;
 
-      // Get response from LLM
-      let responseMessage: any;
+      console.log(
+        chalk.gray(`\n🔄 Iteration ${iterationCount}/${maxIterations}\n`)
+      );
+
       try {
-        responseMessage = await this.llmClient.chatWithRetry(messages);
-      } catch (error) {
-        throw new Error(
-          `Failed to get LLM response: ${(error as Error).message}`
-        );
-      }
+        // Stream response from LLM
+        const stream = this.llmClient.chatStream(messages);
 
-      // Add assistant message to history
-      messages.push(responseMessage);
+        let currentContent = "";
+        let currentToolCalls: any[] = [];
+        let assistantMessage: any = {
+          role: "assistant",
+          content: null,
+        };
 
-      // Check if we have tool calls
-      if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
-        // Process each tool call
-        const toolCalls = this.toolParser.parseToolCalls(responseMessage);
+        // Process stream chunks
+        for await (const chunk of stream) {
+          if (chunk.type === "thinking") {
+            // Display thinking in real-time!
+            process.stdout.write(chalk.dim.italic(chunk.content));
+          } else if (chunk.type === "content") {
+            // Display content as it streams
+            process.stdout.write(chalk.green(chunk.content));
+            currentContent += chunk.content;
+          } else if (chunk.type === "tool_calls") {
+            // Tool calls detected!
+            console.log(); // New line after content
+            currentToolCalls = chunk.tool_calls;
+            assistantMessage.content = chunk.content;
+            assistantMessage.tool_calls = currentToolCalls;
+          } else if (chunk.type === "done") {
+            // Regular completion without tools
+            console.log(); // New line after content
+            assistantMessage.content = chunk.content || currentContent;
+            finalMessage = assistantMessage.content || "";
+            this.memory.addMessage("assistant", finalMessage);
+          } else if (chunk.type === "error") {
+            throw new Error(`Stream error: ${chunk.error}`);
+          } else if (chunk.type === "usage") {
+            // Stats déjà gérés dans OpenRouterClient
+            const tokens = chunk.usage.total_tokens || 0;
+            console.log(chalk.gray(`\n📊 ${tokens} tokens used`));
+          }
+        }
 
-        for (const toolCall of toolCalls) {
-          // Display what we're doing
-          console.log(this.toolParser.formatToolCall(toolCall));
+        // Add assistant message to history
+        messages.push(assistantMessage);
 
-          // Validate tool call
-          const validation = this.toolParser.validateToolCall(toolCall);
-          if (!validation.valid) {
-            // Add error result
+        // If we have tool calls, execute them
+        if (currentToolCalls.length > 0) {
+          console.log(chalk.cyan("\n🔧 Executing tools...\n"));
+
+          // Parse and execute each tool call
+          const parsedToolCalls = this.toolParser.parseToolCalls({
+            role: "assistant",
+            content: assistantMessage.content,
+            tool_calls: currentToolCalls,
+          });
+
+          for (const toolCall of parsedToolCalls) {
+            // Display what we're doing
+            console.log(
+              chalk.cyan("  ➤ ") + this.toolParser.formatToolCall(toolCall)
+            );
+
+            // Validate tool call
+            const validation = this.toolParser.validateToolCall(toolCall);
+            if (!validation.valid) {
+              // Add error result
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: validation.error }),
+              });
+              Display.error(`  ✗ ${validation.error}`);
+              continue;
+            }
+
+            // Execute tool
+            const result = await this.executeTool(toolCall);
+
+            // Add tool result to messages
             messages.push({
               role: "tool",
               tool_call_id: toolCall.id,
-              content: JSON.stringify({ error: validation.error }),
+              content: JSON.stringify(result),
             });
-            continue;
+
+            // Show success
+            if (result.success) {
+              console.log(chalk.gray("    ✓ Done"));
+            } else if (result.error) {
+              Display.error(`    ✗ ${result.error}`);
+            }
           }
 
-          // Execute tool
-          const result = await this.executeTool(toolCall);
-
-          // Add tool result to messages
-          messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(result),
-          });
+          // Continue loop to get next response
+          continue;
         }
 
-        // Continue loop to get next response
-        continue;
-      }
-
-      // No tool calls - we have the final response
-      if (responseMessage.content) {
-        finalMessage = responseMessage.content;
-        this.memory.addMessage("assistant", finalMessage);
+        // No tool calls - we're done!
         break;
+      } catch (error) {
+        throw new Error(
+          `Failed to process request: ${(error as Error).message}`
+        );
       }
-
-      // Safety: if no content and no tool calls, break
-      break;
     }
 
     if (iterationCount >= maxIterations) {
@@ -189,13 +241,32 @@ export class Agent {
           return await this.handleDeleteFile(toolCall.arguments.filename);
 
         case "create_project":
-          return await this.handleCreateProject(toolCall.arguments.project_name);
+          return await this.handleCreateProject(
+            toolCall.arguments.project_name
+          );
 
         case "switch_project":
-          return await this.handleSwitchProject(toolCall.arguments.project_name);
+          return await this.handleSwitchProject(
+            toolCall.arguments.project_name
+          );
 
         case "list_projects":
           return await this.handleListProjects();
+
+        case "send_message":
+          return await this.handleSendMessage(toolCall.arguments.message);
+
+        case "add_todo":
+          return await this.handleAddTodo(toolCall.arguments.task);
+
+        case "complete_todo":
+          return await this.handleCompleteTodo(toolCall.arguments.task);
+
+        case "list_todos":
+          return await this.handleListTodos();
+
+        case "clear_todos":
+          return await this.handleClearTodos();
 
         default:
           return { error: `Unknown tool: ${toolCall.name}` };
@@ -308,9 +379,13 @@ export class Agent {
   private async handleListFiles(): Promise<any> {
     const tree = this.fileManager.displayFileTree();
     console.log(tree);
-    
-    const files = this.vfs.listFiles().filter(f => !f.isDirectory);
-    return { success: true, fileCount: files.length, files: files.map(f => f.path) };
+
+    const files = this.vfs.listFiles().filter((f) => !f.isDirectory);
+    return {
+      success: true,
+      fileCount: files.length,
+      files: files.map((f) => f.path),
+    };
   }
 
   /**
@@ -319,7 +394,7 @@ export class Agent {
   private async handleDeleteFile(filename: string): Promise<any> {
     this.vfs.deleteFile(filename);
     Display.success(`File deleted: ${filename}`);
-    
+
     return { success: true, filename };
   }
 
@@ -383,7 +458,7 @@ export class Agent {
     this.setProjectName(sanitized);
 
     Display.success(`📦 Created new project: ${sanitized}`);
-    
+
     return { success: true, projectName: sanitized };
   }
 
@@ -417,7 +492,7 @@ export class Agent {
     Display.success(
       `🔄 Switched to project: ${sanitized} (${fileCount} files)`
     );
-    
+
     return { success: true, projectName: sanitized, fileCount };
   }
 
@@ -449,7 +524,7 @@ export class Agent {
       console.log(`${icon} ${color(project)}`);
     });
     console.log();
-    
+
     return { success: true, projects, currentProject: this.projectName };
   }
 
@@ -520,5 +595,80 @@ export class Agent {
 
     return loadFiles(projectDir);
   }
-}
 
+  /**
+   * Handle send message action
+   */
+  private async handleSendMessage(message: string): Promise<any> {
+    // Display the agent's message (avec style!)
+    console.log("\n" + chalk.green("🤖 Agent: ") + chalk.white(message) + "\n");
+
+    return { success: true, message };
+  }
+
+  /**
+   * Handle add todo action
+   */
+  private async handleAddTodo(task: string): Promise<any> {
+    this.todoManager.addTodo(task);
+    const stats = this.todoManager.getStats();
+
+    return {
+      success: true,
+      task,
+      stats,
+    };
+  }
+
+  /**
+   * Handle complete todo action
+   */
+  private async handleCompleteTodo(task: string): Promise<any> {
+    const found = this.todoManager.completeTodo(task);
+
+    if (!found) {
+      return {
+        success: false,
+        error: `Task not found: ${task}`,
+      };
+    }
+
+    const stats = this.todoManager.getStats();
+
+    return {
+      success: true,
+      task,
+      stats,
+    };
+  }
+
+  /**
+   * Handle list todos action
+   */
+  private async handleListTodos(): Promise<any> {
+    const todos = this.todoManager.listTodos();
+    const stats = this.todoManager.getStats();
+
+    // Display todos in terminal
+    console.log(this.todoManager.displayTodos());
+
+    return {
+      success: true,
+      todos,
+      stats,
+    };
+  }
+
+  /**
+   * Handle clear todos action
+   */
+  private async handleClearTodos(): Promise<any> {
+    const count = this.todoManager.getStats().total;
+    this.todoManager.clearTodos();
+
+    return {
+      success: true,
+      cleared: count,
+    };
+  }
+}

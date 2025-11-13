@@ -62,6 +62,7 @@ export class ToolParser {
    */
   formatToolCall(toolCall: ParsedToolCall): string {
     const icons: Record<string, string> = {
+      send_message: "💬",
       write_file: "📝",
       read_file: "📖",
       execute_code: "▶️",
@@ -70,17 +71,29 @@ export class ToolParser {
       create_project: "📦",
       switch_project: "🔄",
       list_projects: "📋",
+      add_todo: "✅",
+      complete_todo: "✓",
+      list_todos: "📝",
+      clear_todos: "🗑️",
     };
 
     const icon = icons[toolCall.name] || "🔧";
-    
+
     let description = `${icon} ${toolCall.name}`;
-    
+
     // Add relevant parameters for display
     if (toolCall.arguments.filename) {
       description += `: ${toolCall.arguments.filename}`;
     } else if (toolCall.arguments.project_name) {
       description += `: ${toolCall.arguments.project_name}`;
+    } else if (toolCall.arguments.task) {
+      const taskPreview = toolCall.arguments.task.length > 50
+        ? toolCall.arguments.task.substring(0, 50) + "..."
+        : toolCall.arguments.task;
+      description += `: ${taskPreview}`;
+    } else if (toolCall.arguments.message) {
+      // Don't show message content in tool call (it will be displayed separately)
+      description = `${icon} ${toolCall.name}`;
     }
 
     return chalk.cyan(description);
@@ -92,6 +105,15 @@ export class ToolParser {
   validateToolCall(toolCall: ParsedToolCall): { valid: boolean; error?: string } {
     // Validate based on tool name
     switch (toolCall.name) {
+      case "send_message":
+        if (!toolCall.arguments.message) {
+          return {
+            valid: false,
+            error: "send_message requires message",
+          };
+        }
+        break;
+
       case "write_file":
         if (!toolCall.arguments.filename || !toolCall.arguments.content) {
           return {
@@ -122,8 +144,20 @@ export class ToolParser {
         }
         break;
 
+      case "add_todo":
+      case "complete_todo":
+        if (!toolCall.arguments.task) {
+          return {
+            valid: false,
+            error: `${toolCall.name} requires task`,
+          };
+        }
+        break;
+
       case "list_files":
       case "list_projects":
+      case "list_todos":
+      case "clear_todos":
         // No validation needed
         break;
 
@@ -137,4 +171,3 @@ export class ToolParser {
     return { valid: true };
   }
 }
-
