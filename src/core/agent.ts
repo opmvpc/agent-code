@@ -125,9 +125,11 @@ export class Agent {
     while (iterationCount < maxIterations) {
       iterationCount++;
 
-      console.log(
-        chalk.gray(`\n🔄 Iteration ${iterationCount}/${maxIterations}\n`)
-      );
+      if (process.env.DEBUG === "true") {
+        console.log(
+          chalk.gray(`\n🔄 Iteration ${iterationCount}/${maxIterations}`)
+        );
+      }
 
       try {
         // Stream response from LLM
@@ -139,15 +141,27 @@ export class Agent {
           role: "assistant",
           content: null,
         };
+        let hasThinking = false;
+        let hasContent = false;
 
         // Process stream chunks
         for await (const chunk of stream) {
           if (chunk.type === "thinking") {
-            // Display thinking in real-time!
+            // Display thinking header first time
+            if (!hasThinking) {
+              console.log(chalk.dim("\n💭 Thinking..."));
+              hasThinking = true;
+            }
+            // Display thinking dimmed
             process.stdout.write(chalk.dim.italic(chunk.content));
           } else if (chunk.type === "content") {
+            // Display content header first time
+            if (!hasContent && !hasThinking) {
+              console.log(chalk.cyan("\n💬 Response:"));
+            }
+            hasContent = true;
             // Display content as it streams
-            process.stdout.write(chalk.green(chunk.content));
+            process.stdout.write(chalk.white(chunk.content));
             currentContent += chunk.content;
           } else if (chunk.type === "tool_calls") {
             // Tool calls detected!
@@ -175,7 +189,7 @@ export class Agent {
 
         // If we have tool calls, execute them
         if (currentToolCalls.length > 0) {
-          console.log(chalk.cyan("\n🔧 Executing tools...\n"));
+          console.log(chalk.cyan("\n\n🔧 Actions:\n"));
 
           // Parse and execute each tool call
           const parsedToolCalls = this.toolParser.parseToolCalls({
@@ -185,10 +199,15 @@ export class Agent {
           });
 
           for (const toolCall of parsedToolCalls) {
-            // Display what we're doing
+            // Display what we're doing avec détails!
             console.log(
               chalk.cyan("  ➤ ") + this.toolParser.formatToolCall(toolCall)
             );
+
+            // Affiche les détails de l'action en debug
+            if (process.env.DEBUG === "true") {
+              this.displayToolDetails(toolCall);
+            }
 
             // Validate tool call
             const validation = this.toolParser.validateToolCall(toolCall);
@@ -199,12 +218,14 @@ export class Agent {
                 tool_call_id: toolCall.id,
                 content: JSON.stringify({ error: validation.error }),
               });
-              Display.error(`  ✗ ${validation.error}`);
+              Display.error(`    ✗ ${validation.error}`);
               continue;
             }
 
             // Execute tool
+            const startTime = Date.now();
             const result = await this.executeTool(toolCall);
+            const duration = Date.now() - startTime;
 
             // Add tool result to messages
             messages.push({
@@ -213,9 +234,22 @@ export class Agent {
               content: JSON.stringify(result),
             });
 
-            // Show success
+            // Show success avec timing
             if (result.success) {
-              console.log(chalk.gray("    ✓ Done"));
+              const timing =
+                duration > 100
+                  ? chalk.yellow(` (${duration}ms)`)
+                  : chalk.gray(` (${duration}ms)`);
+              console.log(chalk.green("    ✓ Done") + timing);
+
+              // Affiche le résultat en mode debug
+              if (process.env.DEBUG === "true" && result.output) {
+                console.log(
+                  chalk.gray(
+                    `    Output: ${result.output.substring(0, 100)}...`
+                  )
+                );
+              }
             } else if (result.error) {
               Display.error(`    ✗ ${result.error}`);
             }
@@ -812,5 +846,34 @@ export class Agent {
    */
   getStorageManager(): StorageManager | null {
     return this.storageManager;
+  }
+
+  /**
+   * Affiche les détails d'un tool call (mode debug)
+   */
+  private displayToolDetails(toolCall: ParsedToolCall): void {
+    const details: string[] = [];
+
+    if (toolCall.arguments.filename) {
+      details.push(`file: ${toolCall.arguments.filename}`);
+    }
+    if (toolCall.arguments.content) {
+      const preview = toolCall.arguments.content.substring(0, 80);
+      const truncated = toolCall.arguments.content.length > 80 ? "..." : "";
+      details.push(`content: ${preview}${truncated}`);
+    }
+    if (toolCall.arguments.message) {
+      details.push(`message: "${toolCall.arguments.message}"`);
+    }
+    if (toolCall.arguments.task) {
+      details.push(`task: "${toolCall.arguments.task}"`);
+    }
+    if (toolCall.arguments.project_name) {
+      details.push(`project: ${toolCall.arguments.project_name}`);
+    }
+
+    if (details.length > 0) {
+      console.log(chalk.dim(`    ${details.join(", ")}`));
+    }
   }
 }

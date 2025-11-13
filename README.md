@@ -18,6 +18,7 @@
 - 🔄 **Iterative Debugging**: Agent tries to fix errors automatically
 - 🛡️ **Security**: Sandboxed execution, no external imports allowed
 - 💭 **Thinking Traces**: Watch the AI's reasoning process live (reasoning-enabled models)
+- 💾 **Persistent Storage**: Auto-save/restore sessions with pluggable storage (fs, memory, redis, etc.)
 
 ## 🚀 Quick Start
 
@@ -31,6 +32,9 @@
 ```bash
 # Install dependencies
 npm install
+
+# Install storage (optional but recommended)
+npm install unstorage
 
 # Copy environment template
 cp .env.example .env
@@ -71,6 +75,7 @@ Agent: I'll create a TypeScript file with a Fibonacci calculator...
 - `/save [name]` - Save project to `workspace/` folder (real files!)
 - `/load <name>` - Load project from `workspace/` folder
 - `/stats` - Show agent statistics (including real-time costs, reasoning tokens, cached tokens)
+- `/sessions` - List all saved sessions (storage)
 - `/reset` - Clear everything and start fresh
 - `/clear` - Clear screen
 - `/exit` - Quit the agent
@@ -79,14 +84,35 @@ Agent: I'll create a TypeScript file with a Fibonacci calculator...
 
 The agent provides rich real-time feedback as it works:
 
-- **🔄 Iteration counter** - Shows current step in the agentic loop
+- **🔄 Iteration counter** - Shows current step in the agentic loop (debug mode)
 - **💭 Thinking traces** - See the AI's reasoning process as it happens (for reasoning-enabled models)
 - **🌊 Streaming text** - Watch responses appear character by character
 - **🔧 Tool execution** - Live feedback on which tools are being called
 - **💬 Agent messages** - Agent explains what it's doing between actions
 - **✅ Internal todo list** - Agent creates and checks off tasks as it works
 - **✓/✗ Status indicators** - Immediate success/error feedback for each action
+- **⏱️ Timing** - Execution time for each action
 - **📊 Token usage** - Real-time token counts and costs after each LLM call
+
+### Debug Mode
+
+Enable detailed logging:
+
+```bash
+# In .env
+DEBUG=true
+```
+
+Debug mode shows:
+- Iteration numbers
+- Tool call details (parameters, content previews)
+- Execution timing (highlighted if >100ms)
+- Tool outputs (truncated)
+
+For EXTRA verbose (OpenAI SDK logs):
+```bash
+DEBUG=verbose
+```
 
 ### How the Agent Works 🤖
 
@@ -102,24 +128,38 @@ Example workflow:
 ```
 You: Create a calculator with tests
 
-Agent:
-✅ add_todo: "Create calculator functions"
-✅ add_todo: "Write unit tests"
-✅ add_todo: "Run tests and verify"
+💭 Thinking...
+Agent reasoning about the task...
 
-📝 write_file: calculator.js
-🤖 Agent: "I've created the calculator with add, subtract, multiply, divide functions."
+🔧 Actions:
 
-✓ complete_todo: "Create calculator functions"
+  ➤ ✅ add_todo: Create calculator functions
+    ✓ Done (15ms)
 
-📝 write_file: calculator.test.js
-▶️ execute_code: calculator.test.js
-🤖 Agent: "All tests passing! The calculator is ready to use."
+  ➤ ✅ add_todo: Write unit tests
+    ✓ Done (12ms)
 
-✓ complete_todo: "Write unit tests"
-✓ complete_todo: "Run tests and verify"
+  ➤ 📝 write_file: calculator.js
+    ✓ Done (45ms)
 
-🤖 Agent: "Calculator complete with 4 operations and 8 passing tests!"
+💬 Response:
+I've created the calculator with add, subtract, multiply, divide functions.
+
+🔧 Actions:
+
+  ➤ ✓ complete_todo: Create calculator functions
+    ✓ Done (8ms)
+
+  ➤ 📝 write_file: calculator.test.js
+    ✓ Done (38ms)
+
+  ➤ ▶️ execute_code: calculator.test.js
+    ✓ Done (234ms)
+
+💬 Response:
+All tests passing! The calculator is ready to use with 4 operations and 8 passing tests!
+
+📊 1247 tokens used
 ```
 
 ### Example Prompts
@@ -151,217 +191,95 @@ Try these to get started:
    Make a simple calculator with add, subtract, multiply, divide functions and test them
    ```
 
-## 🏗️ Architecture
+## ⚙️ Configuration
 
-```
-📦 minimal-ts-agent/
-├── 📁 src/
-│   ├── 📁 core/          # Agent brain & memory
-│   ├── 📁 filesystem/    # Virtual filesystem
-│   ├── 📁 executor/      # Code execution sandbox
-│   ├── 📁 cli/           # Terminal interface
-│   ├── 📁 llm/           # OpenRouter integration
-│   └── index.ts          # Entry point
-├── 📁 config/            # Model configurations
-└── .env                  # Environment variables
-```
-
-### Core Components
-
-- **Agent** (`src/core/agent.ts`): Main orchestrator
-- **Memory** (`src/core/memory.ts`): Conversation history
-- **VirtualFileSystem** (`src/filesystem/virtual-fs.ts`): In-memory filesystem
-- **CodeExecutor** (`src/executor/code-runner.ts`): Sandboxed code execution
-- **OpenRouterClient** (`src/llm/openrouter.ts`): LLM communication
-
-## 🔧 Configuration
-
-### Environment Variables
+All configuration is done via environment variables in `.env`:
 
 ```bash
 # Required
-OPENROUTER_API_KEY=your_key_here
+OPENROUTER_API_KEY=sk-or-v1-...
 
-# Optional - Basic Settings
-DEFAULT_MODEL=openai/gpt-oss-120b          # Default model (try the FREE one! 🎉)
-MAX_TOKENS=4096                            # Max tokens per response
-TEMPERATURE=0.7                            # 0.0 = deterministic, 1.0 = creative
-DEBUG=false                                # Enable debug logging
+# Optional
+DEFAULT_MODEL=anthropic/claude-3.5-sonnet
+MAX_TOKENS=4096
+TEMPERATURE=0.7
+DEBUG=false
 
-# Optional - Reasoning Settings (for Grok, GPT-5, GPT-OSS)
-REASONING_ENABLED=true                     # Enable reasoning mode
-REASONING_EFFORT=medium                    # low | medium | high (let AI decide token count)
-REASONING_EXCLUDE=false                    # Exclude reasoning tokens from response
+# Storage (persistent sessions)
+STORAGE_ENABLED=true
+STORAGE_DRIVER=fs
+STORAGE_BASE_PATH=./.agent-storage
+
+# Reasoning (for supported models)
+REASONING_ENABLED=true
+REASONING_EFFORT=medium
 ```
 
-**Reasoning Settings Explained** 🧠:
+See `INSTALL_STORAGE.md` and `REASONING.md` for details.
 
-- **low effort**: Quick thinking - AI decides optimal token count
-- **medium effort**: Balanced reasoning (default) - AI allocates as needed
-- **high effort**: Deep analysis - AI uses as many tokens as required
-- **exclude**: If true, reasoning tokens won't appear in response (but still used internally)
-
-**Note**: Token counts are managed automatically by the AI. Real costs are tracked via OpenRouter's Usage Accounting API! 💰
-
-### Supported Models
-
-Check `config/models.json` for available models. **Updated for 2025!** 🚀
-
-#### 🎯 Recommended Models:
-
-- **GPT-OSS 120B** 🆓 - FREE open source! Supports reasoning. Perfect for learning.
-- **Grok 4 Fast** ⚡ - 2M context window! Supports reasoning. Can read entire codebases.
-- **GPT-5 Nano** 💎 - Cheap GPT-5. Supports reasoning + web search.
-- **Devstral Small** 🛠️ - Code-focused, no reasoning. Fast for simple tasks.
-
-#### 🧠 Models with Reasoning Support:
-
-Reasoning = model "thinks" before responding, like o1/o3 style.
-
-- ✅ **GPT-OSS 120B** - Free reasoning!
-- ✅ **Grok 4 Fast** - Best reasoning with huge context
-- ✅ **GPT-5 Nano** - Balanced reasoning + web search
-- ❌ **Devstral Small** - No reasoning (but fast)
-
-**Pro tip**: Use `REASONING_EFFORT=high` for complex bugs, `low` for simple tasks!
-
-## 🛡️ Security & Limitations
-
-### Sandbox Restrictions
-
-- ✅ Pure JavaScript/TypeScript only
-- ✅ Basic built-ins: console, setTimeout, Array, Object, String, Number, JSON
-- ❌ No `require()` or `import`
-- ❌ No access to `fs`, `process`, `child_process`, etc.
-- ❌ No `eval()` or `Function()` constructor
-- ⏱️ 5 second timeout per execution
-- 💾 128MB memory limit
-
-### Filesystem Limits
-
-- 10MB total storage
-- 1MB max per file
-- Supported extensions: `.js`, `.ts`, `.json`, `.txt`, `.md`, `.html`, `.css`
-
-## 🎯 How It Works
-
-1. **User Input** → You type a request
-2. **LLM Processing** → Agent sends to OpenRouter
-3. **Response Parsing** → Extracts actions (write file, execute code, etc.)
-4. **Action Execution** → Performs actions in sandboxed environment
-5. **Feedback Loop** → Shows results and can iterate on errors
-
-### Response Format
-
-The agent expects/generates responses in this JSON format:
-
-```json
-{
-  "thought": "I'll create a fibonacci function...",
-  "actions": [
-    {
-      "type": "write_file",
-      "filename": "fib.ts",
-      "content": "function fib(n: number): number { ... }"
-    },
-    {
-      "type": "execute_code",
-      "filename": "fib.ts"
-    }
-  ],
-  "message": "Created and executed fibonacci calculator!"
-}
-```
-
-## 🐛 Troubleshooting
-
-### "API key not found"
-
-Make sure you have a `.env` file with `OPENROUTER_API_KEY` set.
-
-### "Rate limit exceeded"
-
-OpenRouter has rate limits. Wait a few seconds and try again.
-
-### "vm2 deprecation warning"
-
-Yes, vm2 is deprecated but still works fine for this use case. We prioritize functionality over perfection (deal with it 🤷).
-
-### Code execution fails
-
-Check if your code:
-
-- Has syntax errors
-- Uses forbidden features (require, import, fs, etc.)
-- Has infinite loops (5 second timeout)
-
-## 📊 Stats & Monitoring
-
-Use `/stats` to see **real-time** usage info:
-
-- Number of files created
-- Filesystem usage
-- LLM requests and total tokens
-- **Reasoning tokens** used (for thinking 🧠)
-- **Cached tokens** (optimization ⚡)
-- **Actual costs** from OpenRouter (not estimated!)
-
-Example output:
+## 🏗️ Architecture
 
 ```
-LLM Usage:
-  Requests        : 5
-  Total Tokens    : 12,450
-  Reasoning Tokens: 3,200
-  Cached Tokens   : 1,100 ⚡
-  Actual Cost     : $0.002340 🎉
+┌─────────────────────────────────────┐
+│         CLI Interface               │
+│  (inquirer, chalk, ora, boxen)      │
+└────────────┬────────────────────────┘
+             │
+┌────────────▼────────────────────────┐
+│          Agent Core                 │
+│  • Memory Management                │
+│  • LLM Communication (streaming)    │
+│  • Tool Execution                   │
+│  • Todo Management                  │
+│  • Session Storage                  │
+└────────────┬────────────────────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+┌────▼─────┐   ┌────▼─────────┐
+│  Virtual │   │     Code      │
+│   FS     │   │   Executor    │
+│ (memfs)  │   │    (vm2)      │
+└──────────┘   └───────────────┘
 ```
 
-## 🎓 Educational Use
+## 🔧 Development
 
-This project is designed as a learning tool for:
+```bash
+# Install dependencies
+npm install
 
-- Building AI agents
-- LLM integration patterns
-- Sandboxed code execution
-- CLI application development
-- TypeScript best practices
+# Run in dev mode with auto-reload
+npm run dev
 
-Perfect for workshops, courses, or just understanding how AI agents work!
+# Build
+npm run build
+
+# Type check
+npx tsc --noEmit
+```
+
+## 📦 Tech Stack
+
+- **TypeScript** - Type-safe development
+- **OpenRouter** - Multi-model LLM access (OpenAI SDK compatible)
+- **memfs** - In-memory virtual filesystem
+- **vm2** - Secure code sandbox
+- **inquirer** - Interactive CLI prompts
+- **chalk** - Terminal colors
+- **ora** - Spinners
+- **boxen** - Boxes around messages
+- **zod** - Schema validation
+- **unstorage** - Pluggable storage (optional)
 
 ## 🤝 Contributing
 
-This is a minimal example project. Feel free to:
+This is a minimal example project to demonstrate how to build an AI agent. Feel free to fork and extend it!
 
-- Fork it
-- Extend it
-- Break it
-- Learn from it
+## 📄 License
 
-No formal contribution process because this is meant to be simple and hackable.
-
-## 📜 License
-
-MIT - Do whatever you want with it (but don't blame me if it breaks 🤡)
-
-## 🙏 Acknowledgments
-
-- **vm2** - For sandboxing (RIP, you served us well)
-- **OpenRouter** - For multi-model API access
-- **memfs** - For virtual filesystem
-- **inquirer** - For beautiful CLI prompts
-- **chalk** - For colorful terminal output
-
-## 💡 Tips & Tricks
-
-1. **Start Simple**: Test with basic tasks first
-2. **Be Specific**: Clear instructions = better results
-3. **Iterate**: Let the agent fix its own errors
-4. **Save Often**: Use `/save` to export your work
-5. **Check Stats**: Monitor your API usage with `/stats`
+MIT - Do whatever you want with it!
 
 ---
 
-**Built with 💚 and a healthy dose of cynicism by Claude-sama** (▀̿Ĺ̯▀̿ ̿)
-
-_If this agent writes better code than you, that's a skill issue on your part fr fr_ 💀
+Built with ❤️ and a lot of sarcasm by Claude-sama 🏴‍☠️

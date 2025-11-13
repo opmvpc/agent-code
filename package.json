@@ -10,7 +10,12 @@
     "build": "tsc",
     "clean": "rm -rf dist"
   },
-  "keywords": ["agent", "llm", "openrouter", "sandbox"],
+  "keywords": [
+    "agent",
+    "llm",
+    "openrouter",
+    "sandbox"
+  ],
   "author": "Thibault le Belge (avec aide de Claude-sama 😏)",
   "license": "MIT",
   "dependencies": {
@@ -24,6 +29,7 @@
     "memfs": "^4.6.0",
     "openai": "^4.28.0",
     "ora": "^8.0.1",
+    "unstorage": "^1.17.2",
     "vm2": "^3.9.19",
     "zod": "^3.22.4"
   },

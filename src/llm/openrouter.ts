@@ -47,6 +47,11 @@ export class OpenRouterClient {
   private totalCachedTokens = 0;
 
   constructor(config: OpenRouterConfig) {
+    // Disable OpenAI SDK verbose logging (c'est chiant 🙄)
+    if (process.env.DEBUG !== "verbose") {
+      process.env.OPENAI_LOG = "silent";
+    }
+
     this.client = new OpenAI({
       baseURL: "https://openrouter.ai/api/v1",
       apiKey: config.apiKey,
