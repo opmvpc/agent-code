@@ -23,6 +23,9 @@ import chalk from "chalk";
 import { AGENT_TOOLS } from "../llm/tools.js";
 import { ToolParser, type ParsedToolCall } from "../llm/tool-parser.js";
 import { TodoManager } from "./todo-manager.js";
+import { StorageManager } from "../storage/storage-manager.js";
+import { UnstorageDriver } from "../storage/unstorage-driver.js";
+import type { SessionData } from "../storage/storage-driver.js";
 
 export interface AgentConfig {
   apiKey: string;
@@ -31,6 +34,11 @@ export interface AgentConfig {
   temperature?: number;
   debug?: boolean;
   reasoning?: ReasoningOptions;
+  storage?: {
+    enabled?: boolean;
+    driver?: "fs" | "memory";
+    basePath?: string;
+  };
 }
 
 export class Agent {
@@ -41,6 +49,7 @@ export class Agent {
   private llmClient: OpenRouterClient;
   private toolParser: ToolParser;
   private todoManager: TodoManager;
+  private storageManager: StorageManager | null = null;
   private projectName: string;
 
   constructor(config: AgentConfig) {
@@ -64,8 +73,24 @@ export class Agent {
       tools: AGENT_TOOLS, // Pass our tool definitions!
     });
 
+    // Initialize storage if enabled
+    if (config.storage?.enabled !== false) {
+      const driver = new UnstorageDriver({
+        driver: config.storage?.driver || "fs",
+        base: config.storage?.basePath || "./.agent-storage",
+      });
+      this.storageManager = new StorageManager(driver);
+    }
+
     // Add system prompt to memory
     this.memory.addMessage("system", SYSTEM_PROMPT);
+
+    // Try to restore last session if storage is enabled
+    if (this.storageManager) {
+      this.restoreLastSession().catch(() => {
+        // Silent fail - start fresh if no session
+      });
+    }
   }
 
   /**
@@ -194,6 +219,11 @@ export class Agent {
             } else if (result.error) {
               Display.error(`    ✗ ${result.error}`);
             }
+          }
+
+          // Auto-save session after tool execution
+          if (this.storageManager?.isAutoSaveEnabled()) {
+            await this.saveCurrentSession();
           }
 
           // Continue loop to get next response
@@ -670,5 +700,117 @@ export class Agent {
       success: true,
       cleared: count,
     };
+  }
+
+  /**
+   * Sauvegarde la session actuelle dans le storage
+   */
+  private async saveCurrentSession(): Promise<void> {
+    if (!this.storageManager) return;
+
+    try {
+      // Récupère tous les fichiers du VFS
+      const files: Record<string, string> = {};
+      const allFiles = this.vfs.listFiles().filter((f) => !f.isDirectory);
+      for (const file of allFiles) {
+        files[file.path] = this.vfs.readFile(file.path);
+      }
+
+      // Récupère les messages (simplifié)
+      const messages = this.memory.getMessages().map((msg: any) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      // Récupère les todos
+      const todos = this.todoManager.listTodos().map((todo) => ({
+        task: todo.task,
+        completed: todo.completed,
+        createdAt: todo.createdAt.toISOString(),
+      }));
+
+      const sessionData: SessionData = {
+        projectName: this.projectName,
+        files,
+        messages,
+        todos,
+        metadata: {
+          lastSaved: new Date().toISOString(),
+          version: "1.0.0",
+        },
+      };
+
+      await this.storageManager.saveSession(sessionData);
+    } catch (error) {
+      // Silent fail - pas critique
+      if (process.env.DEBUG === "true") {
+        console.error(chalk.gray("Note: Could not save session"));
+      }
+    }
+  }
+
+  /**
+   * Restaure la dernière session depuis le storage
+   */
+  private async restoreLastSession(): Promise<void> {
+    if (!this.storageManager) return;
+
+    try {
+      // Liste toutes les sessions et prend la plus récente
+      const sessions = await this.storageManager.listSessions();
+      if (sessions.length === 0) return;
+
+      // Trier par date (les IDs contiennent le timestamp)
+      const sortedSessions = sessions.sort().reverse();
+      const latestSession = sortedSessions[0];
+
+      const sessionData = await this.storageManager.loadSession(latestSession);
+      if (!sessionData) return;
+
+      // Restaure le nom du projet
+      this.projectName = sessionData.projectName;
+
+      // Restaure les fichiers dans le VFS
+      this.vfs.reset();
+      for (const [path, content] of Object.entries(sessionData.files)) {
+        this.vfs.writeFile(path, content);
+      }
+
+      // Restaure les messages (reset memory first)
+      this.memory = new AgentMemory(10);
+      this.memory.addMessage("system", SYSTEM_PROMPT);
+      for (const msg of sessionData.messages) {
+        if (msg.role !== "system") {
+          this.memory.addMessage(msg.role as any, msg.content || "");
+        }
+      }
+
+      // Restaure les todos
+      this.todoManager.clearTodos();
+      for (const todo of sessionData.todos) {
+        this.todoManager.addTodo(todo.task);
+        if (todo.completed) {
+          this.todoManager.completeTodo(todo.task);
+        }
+      }
+
+      console.log(
+        chalk.green(`\n📂 Session restored: ${latestSession}`) +
+          chalk.gray(
+            ` (${Object.keys(sessionData.files).length} files, ${
+              sessionData.messages.length
+            } messages)`
+          )
+      );
+    } catch (error) {
+      // Silent fail
+    }
+  }
+
+  /**
+   * Obtient le storage manager (pour les commandes)
+   */
+  getStorageManager(): StorageManager | null {
+    return this.storageManager;
   }
 }

@@ -64,6 +64,11 @@ async function main() {
       temperature: parseFloat(process.env.TEMPERATURE || '0.7'),
       debug: process.env.DEBUG === 'true',
       reasoning: Object.keys(reasoningOptions).length > 0 ? reasoningOptions : undefined,
+      storage: {
+        enabled: process.env.STORAGE_ENABLED !== 'false',
+        driver: (process.env.STORAGE_DRIVER as 'fs' | 'memory') || 'fs',
+        basePath: process.env.STORAGE_BASE_PATH || './.agent-storage',
+      },
     });
 
     // Create command handler

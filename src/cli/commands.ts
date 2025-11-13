@@ -100,6 +100,10 @@ export class CommandHandler {
         this.exportMemory(args[0]);
         return true;
 
+      case 'sessions':
+        await this.showSessions();
+        return true;
+
       case 'exit':
       case 'quit':
         this.exit();
@@ -130,6 +134,7 @@ export class CommandHandler {
       ['save [name]', 'Save project to workspace/ folder'],
       ['load <name>', 'Load project from workspace/ folder'],
       ['stats', 'Show detailed agent statistics'],
+      ['sessions', 'List all saved sessions (storage)'],
       ['export [path]', 'Export conversation memory to JSON'],
       ['exit, quit', 'Exit the agent'],
     ];
@@ -396,6 +401,45 @@ export class CommandHandler {
       Display.success(`Memory exported to: ${filename} 💾`);
     } catch (error) {
       Display.error(`Failed to export memory: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Show saved sessions
+   */
+  private async showSessions(): Promise<void> {
+    const storageManager = this.agent.getStorageManager();
+
+    if (!storageManager) {
+      Display.warning('Storage is not enabled. Enable it in .env with STORAGE_ENABLED=true');
+      return;
+    }
+
+    try {
+      const sessions = await storageManager.listSessions();
+
+      if (sessions.length === 0) {
+        Display.info('No saved sessions found.');
+        return;
+      }
+
+      console.log(chalk.cyan('\n📂 Saved Sessions:\n'));
+
+      const sortedSessions = sessions.sort().reverse();
+      const currentSessionId = storageManager.getSessionId();
+
+      for (const sessionId of sortedSessions) {
+        const isCurrent = sessionId === currentSessionId;
+        const icon = isCurrent ? '👉' : '  ';
+        const color = isCurrent ? chalk.bold.green : chalk.white;
+        console.log(`${icon} ${color(sessionId)}`);
+      }
+
+      console.log();
+      Display.info(`Current session: ${chalk.bold(currentSessionId)}`);
+      console.log();
+    } catch (error) {
+      Display.error(`Failed to list sessions: ${(error as Error).message}`);
     }
   }
 
