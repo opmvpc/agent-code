@@ -62,7 +62,8 @@ export class ToolParser {
    */
   formatToolCall(toolCall: ParsedToolCall): string {
     const icons: Record<string, string> = {
-      send_message: "💬",
+      send_message: "💬", // Hidden - don't show
+      stop: "🛑",
       write_file: "📝",
       read_file: "📖",
       execute_code: "▶️",
@@ -106,12 +107,8 @@ export class ToolParser {
     // Validate based on tool name
     switch (toolCall.name) {
       case "send_message":
-        if (!toolCall.arguments.message) {
-          return {
-            valid: false,
-            error: "send_message requires message",
-          };
-        }
+      case "stop":
+        // No validation needed - no params
         break;
 
       case "write_file":

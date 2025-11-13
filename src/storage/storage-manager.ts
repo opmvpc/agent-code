@@ -11,6 +11,11 @@ export class StorageManager {
   private driver: StorageDriver;
   private currentSessionId: string;
   private autoSaveEnabled: boolean;
+  private modelConfig?: {
+    modelId: string;
+    reasoningEnabled: boolean;
+    reasoningEffort: "low" | "medium" | "high";
+  };
 
   constructor(driver: StorageDriver, options: { autoSave?: boolean } = {}) {
     this.driver = driver;
@@ -142,5 +147,19 @@ export class StorageManager {
    */
   isAutoSaveEnabled(): boolean {
     return this.autoSaveEnabled;
+  }
+
+  /**
+   * Sauvegarde la config du modèle
+   */
+  setModelConfig(modelId: string, reasoningEnabled: boolean, reasoningEffort: "low" | "medium" | "high"): void {
+    this.modelConfig = { modelId, reasoningEnabled, reasoningEffort };
+  }
+
+  /**
+   * Récupère la config du modèle sauvegardée
+   */
+  getModelConfig(): { modelId: string; reasoningEnabled: boolean; reasoningEffort: "low" | "medium" | "high" } | undefined {
+    return this.modelConfig;
   }
 }

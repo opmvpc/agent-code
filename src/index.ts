@@ -10,11 +10,14 @@ import { Agent } from './core/agent.js';
 import { ChatInterface } from './cli/chat.js';
 import { CommandHandler } from './cli/commands.js';
 import { Display } from './cli/display.js';
+import { ModelSelector } from './cli/model-selector.js';
+import { StorageManager } from './storage/storage-manager.js';
+import { UnstorageDriver } from './storage/unstorage-driver.js';
 
 /**
  * Validate environment
  */
-function validateEnvironment(): { apiKey: string; model: string } {
+function validateEnvironment(): { apiKey: string } {
   const apiKey = process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
@@ -29,9 +32,7 @@ function validateEnvironment(): { apiKey: string; model: string } {
     process.exit(1);
   }
 
-  const model = process.env.DEFAULT_MODEL || 'anthropic/claude-3.5-sonnet';
-
-  return { apiKey, model };
+  return { apiKey };
 }
 
 /**
@@ -40,26 +41,65 @@ function validateEnvironment(): { apiKey: string; model: string } {
 async function main() {
   try {
     // Validate environment
-    const { apiKey, model } = validateEnvironment();
+    const { apiKey } = validateEnvironment();
+
+    // Initialize storage pour charger les préférences
+    let storageManager: StorageManager | undefined;
+    if (process.env.STORAGE_ENABLED !== 'false') {
+      const driver = new UnstorageDriver({
+        driver: (process.env.STORAGE_DRIVER as 'fs' | 'memory') || 'fs',
+        base: process.env.STORAGE_BASE_PATH || './.agent-storage',
+      });
+      storageManager = new StorageManager(driver);
+
+      // Essayer de charger la dernière session pour récupérer la config modèle
+      const sessions = await storageManager.listSessions();
+      if (sessions.length > 0) {
+        const lastSession = sessions.sort().reverse()[0];
+        const sessionData = await storageManager.loadSession(lastSession);
+        if (sessionData?.modelConfig) {
+          storageManager.setModelConfig(
+            sessionData.modelConfig.modelId,
+            sessionData.modelConfig.reasoningEnabled,
+            sessionData.modelConfig.reasoningEffort
+          );
+        }
+      }
+    }
+
+    // Model selection interactif!
+    const modelSelector = new ModelSelector();
+    const savedModel = storageManager?.getModelConfig();
+
+    const modelSelection = await modelSelector.selectModel(savedModel?.modelId);
+
+    // Sauvegarder le choix dans le storage
+    if (storageManager) {
+      storageManager.setModelConfig(
+        modelSelection.modelId,
+        modelSelection.reasoningEnabled,
+        modelSelection.reasoningEffort
+      );
+    }
+
+    // Afficher les infos du modèle
+    modelSelector.displayModelInfo(
+      modelSelection.modelId,
+      modelSelection.reasoningEnabled,
+      modelSelection.reasoningEffort
+    );
 
     // Parse reasoning options
     const reasoningOptions: any = {};
-    if (process.env.REASONING_ENABLED === 'true') {
+    if (modelSelection.reasoningEnabled) {
       reasoningOptions.enabled = true;
-
-      if (process.env.REASONING_EFFORT) {
-        reasoningOptions.effort = process.env.REASONING_EFFORT as 'low' | 'medium' | 'high';
-      }
-
-      if (process.env.REASONING_EXCLUDE === 'true') {
-        reasoningOptions.exclude = true;
-      }
+      reasoningOptions.effort = modelSelection.reasoningEffort;
     }
 
     // Create agent
     const agent = new Agent({
       apiKey,
-      model,
+      model: modelSelection.modelId,
       maxTokens: parseInt(process.env.MAX_TOKENS || '4096'),
       temperature: parseFloat(process.env.TEMPERATURE || '0.7'),
       debug: process.env.DEBUG === 'true',

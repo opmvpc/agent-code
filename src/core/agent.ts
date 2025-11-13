@@ -144,24 +144,45 @@ export class Agent {
         let hasThinking = false;
         let hasContent = false;
 
+        // Buffers pour smooth rendering sans clignottement
+        let thinkingBuffer = "";
+        let contentBuffer = "";
+        const BUFFER_SIZE = 10; // Afficher tous les 10 chars
+
         // Process stream chunks
         for await (const chunk of stream) {
           if (chunk.type === "thinking") {
             // Display thinking header first time
             if (!hasThinking) {
-              console.log(chalk.dim("\n💭 Thinking..."));
+              console.log(chalk.dim.italic("\n💭 Thinking..."));
               hasThinking = true;
             }
-            // Display thinking dimmed
-            process.stdout.write(chalk.dim.italic(chunk.content));
+            // Buffer thinking et flush périodiquement
+            thinkingBuffer += chunk.content;
+            if (thinkingBuffer.length >= BUFFER_SIZE) {
+              process.stdout.write(chalk.dim(thinkingBuffer));
+              thinkingBuffer = "";
+            }
           } else if (chunk.type === "content") {
             // Display content header first time
-            if (!hasContent && !hasThinking) {
-              console.log(chalk.cyan("\n💬 Response:"));
+            if (!hasContent) {
+              if (hasThinking) {
+                // Flush remaining thinking buffer
+                if (thinkingBuffer) {
+                  process.stdout.write(chalk.dim(thinkingBuffer));
+                  thinkingBuffer = "";
+                }
+                console.log(); // New line after thinking
+              }
+              console.log(chalk.cyan("\n💬 Agent:"));
+              hasContent = true;
             }
-            hasContent = true;
-            // Display content as it streams
-            process.stdout.write(chalk.white(chunk.content));
+            // Buffer content et flush périodiquement
+            contentBuffer += chunk.content;
+            if (contentBuffer.length >= BUFFER_SIZE) {
+              process.stdout.write(chalk.white(contentBuffer));
+              contentBuffer = "";
+            }
             currentContent += chunk.content;
           } else if (chunk.type === "tool_calls") {
             // Tool calls detected!
@@ -180,8 +201,18 @@ export class Agent {
           } else if (chunk.type === "usage") {
             // Stats déjà gérés dans OpenRouterClient
             const tokens = chunk.usage.total_tokens || 0;
-            console.log(chalk.gray(`\n📊 ${tokens} tokens used`));
+            if (process.env.DEBUG === "true") {
+              console.log(chalk.gray(`\n📊 ${tokens} tokens used`));
+            }
           }
+        }
+
+        // Flush remaining buffers (derniers chars!)
+        if (thinkingBuffer) {
+          process.stdout.write(chalk.dim(thinkingBuffer));
+        }
+        if (contentBuffer) {
+          process.stdout.write(chalk.white(contentBuffer));
         }
 
         // Add assistant message to history
@@ -189,7 +220,7 @@ export class Agent {
 
         // If we have tool calls, execute them
         if (currentToolCalls.length > 0) {
-          console.log(chalk.cyan("\n\n🔧 Actions:\n"));
+          console.log(chalk.cyan("\n\n🔧 Actions:"));
 
           // Parse and execute each tool call
           const parsedToolCalls = this.toolParser.parseToolCalls({
@@ -198,10 +229,31 @@ export class Agent {
             tool_calls: currentToolCalls,
           });
 
+          let shouldStop = false;
+
           for (const toolCall of parsedToolCalls) {
+            // Track if we should stop
+            if (toolCall.name === "stop") {
+              shouldStop = true;
+            }
+
+            // Don't display send_message (it's in the streamed content already)
+            if (toolCall.name === "send_message") {
+              // Execute silently
+              const result = await this.executeTool(toolCall);
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(result),
+              });
+              continue;
+            }
+
             // Display what we're doing avec détails!
             console.log(
-              chalk.cyan("  ➤ ") + this.toolParser.formatToolCall(toolCall)
+              "\n" +
+                chalk.cyan("  ➤ ") +
+                this.toolParser.formatToolCall(toolCall)
             );
 
             // Affiche les détails de l'action en debug
@@ -255,9 +307,10 @@ export class Agent {
             }
           }
 
-          // Auto-save session after tool execution
-          if (this.storageManager?.isAutoSaveEnabled()) {
-            await this.saveCurrentSession();
+          // Si l'agent a appelé stop, il a fini!
+          if (shouldStop) {
+            finalMessage = currentContent || "Task completed.";
+            break;
           }
 
           // Continue loop to get next response
@@ -275,6 +328,11 @@ export class Agent {
 
     if (iterationCount >= maxIterations) {
       console.warn(chalk.yellow("\n⚠️  Max iterations reached"));
+    }
+
+    // Save session at the end of request
+    if (this.storageManager?.isAutoSaveEnabled()) {
+      await this.saveCurrentSession();
     }
 
     return { message: finalMessage || "Task completed." };
@@ -318,7 +376,10 @@ export class Agent {
           return await this.handleListProjects();
 
         case "send_message":
-          return await this.handleSendMessage(toolCall.arguments.message);
+          return await this.handleSendMessage();
+
+        case "stop":
+          return await this.handleStop();
 
         case "add_todo":
           return await this.handleAddTodo(toolCall.arguments.task);
@@ -661,13 +722,18 @@ export class Agent {
   }
 
   /**
-   * Handle send message action
+   * Handle send message action (silent - message already streamed)
    */
-  private async handleSendMessage(message: string): Promise<any> {
-    // Display the agent's message (avec style!)
-    console.log("\n" + chalk.green("🤖 Agent: ") + chalk.white(message) + "\n");
+  private async handleSendMessage(): Promise<any> {
+    // Le message est déjà dans le content streamé, rien à faire
+    return { success: true };
+  }
 
-    return { success: true, message };
+  /**
+   * Handle stop action
+   */
+  private async handleStop(): Promise<any> {
+    return { success: true, stopped: true };
   }
 
   /**
@@ -763,11 +829,15 @@ export class Agent {
         createdAt: todo.createdAt.toISOString(),
       }));
 
+      // Récupère la config modèle depuis storage si dispo
+      const modelConfig = this.storageManager?.getModelConfig();
+
       const sessionData: SessionData = {
         projectName: this.projectName,
         files,
         messages,
         todos,
+        modelConfig,
         metadata: {
           lastSaved: new Date().toISOString(),
           version: "1.0.0",

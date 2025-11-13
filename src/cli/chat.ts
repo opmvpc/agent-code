@@ -72,21 +72,18 @@ export class ChatInterface {
 
       // Process with agent
       Display.divider();
-      const spinner = ora({
-        text: chalk.cyan('Agent is thinking...'),
-        color: 'cyan',
-      }).start();
 
       try {
         const response = await this.agent.processRequest(userMessage);
-        spinner.stop();
 
         // Le message est déjà affiché par le streaming!
         // On affiche juste un divider pour séparer
         console.log(); // Extra line break
         Display.divider();
+
+        // Petit délai pour éviter conflit curseur avec inquirer
+        await new Promise(resolve => setTimeout(resolve, 50));
       } catch (error) {
-        spinner.stop();
         Display.error((error as Error).message);
 
         // Suggest recovery

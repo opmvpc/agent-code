@@ -9,6 +9,11 @@ export interface SessionData {
   files: Record<string, string>; // path -> content
   messages: Array<{ role: string; content: string | null; [key: string]: any }>;
   todos: Array<{ task: string; completed: boolean; createdAt: string }>;
+  modelConfig?: {
+    modelId: string;
+    reasoningEnabled: boolean;
+    reasoningEffort: "low" | "medium" | "high";
+  };
   metadata: {
     lastSaved: string;
     version: string;

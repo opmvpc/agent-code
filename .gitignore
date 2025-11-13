@@ -33,3 +33,6 @@ Thumbs.db
 
 # Workspace directory (agent output files 📁)
 workspace/
+
+# Agent storage directory
+.agent-storage/
