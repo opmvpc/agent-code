@@ -1,0 +1,76 @@
+{
+  "models": [
+    {
+      "id": "openai/gpt-oss-120b",
+      "name": "GPT-OSS 120B",
+      "provider": "OpenAI",
+      "contextWindow": 131072,
+      "maxTokens": 4096,
+      "reasoning": {
+        "supported": true,
+        "type": "openai",
+        "defaultEffort": "medium"
+      },
+      "recommended": true,
+      "description": "FREE open source model! 🎉 Supports reasoning. Perfect pour les broke devs."
+    },
+    {
+      "id": "x-ai/grok-4-fast",
+      "name": "Grok 4 Fast",
+      "provider": "xAI",
+      "contextWindow": 2000000,
+      "maxTokens": 8192,
+      "reasoning": {
+        "supported": true,
+        "type": "openai",
+        "defaultEffort": "high"
+      },
+      "recommended": true,
+      "description": "Elon's AI with HUGE context (2M tokens) 🚀 Fast & smart avec reasoning."
+    },
+    {
+      "id": "openai/gpt-5-nano",
+      "name": "GPT-5 Nano",
+      "provider": "OpenAI",
+      "contextWindow": 400000,
+      "maxTokens": 4096,
+      "reasoning": {
+        "supported": true,
+        "type": "openai",
+        "defaultEffort": "medium"
+      },
+      "recommended": false,
+      "description": "GPT-5 baby version. Supports reasoning + web search capability."
+    },
+    {
+      "id": "mistralai/devstral-small",
+      "name": "Devstral Small 1.1",
+      "provider": "Mistral",
+      "contextWindow": 128000,
+      "maxTokens": 4096,
+      "reasoning": {
+        "supported": false
+      },
+      "recommended": false,
+      "description": "Code-focused model sans reasoning. Bon pour le code simple et rapide."
+    }
+  ],
+  "reasoning": {
+    "info": "Some models support extended reasoning (like o1/o3)",
+    "efforts": {
+      "low": "Quick thinking, less tokens (~100-500)",
+      "medium": "Balanced reasoning (~500-2000)",
+      "high": "Deep analysis, more tokens (~2000-10000)"
+    },
+    "note": "Reasoning tokens count toward your usage but improve output quality! 🧠"
+  },
+  "notes": [
+    "Costs are tracked in real-time via OpenRouter's Usage Accounting API",
+    "Models with reasoning support can 'think' before responding",
+    "Use reasoning='high' for complex problems, 'low' for simple tasks",
+    "gpt-oss-120b is FREE - abuse it responsibly 🤡",
+    "Grok has 2M context = can read your entire codebase (scary)",
+    "Check OpenRouter for latest model info: https://openrouter.ai/models",
+    "Usage stats include prompt/completion/reasoning tokens + real costs"
+  ]
+}

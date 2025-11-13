@@ -1,0 +1,35 @@
+# Dependencies (le bordel habituel 📦)
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment variables (NEVER commit cette merde! 🚨)
+.env
+.env.local
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs (ton historique de fail 📝)
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+.temp/
+
+# Workspace directory (agent output files 📁)
+workspace/
