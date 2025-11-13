@@ -82,10 +82,6 @@ export class ChatInterface {
         spinner.stop();
 
         // Display agent response
-        if (response.thought) {
-          Display.agentThought(response.thought);
-        }
-
         if (response.message) {
           Display.agentMessage(response.message);
         }

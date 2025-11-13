@@ -9,7 +9,6 @@ import { VirtualFileSystem } from "../filesystem/virtual-fs.js";
 import { FileManager } from "../filesystem/file-manager.js";
 import { CodeExecutor } from "../executor/code-runner.js";
 import { OpenRouterClient, type ReasoningOptions } from "../llm/openrouter.js";
-import { ResponseParser, type AgentResponse } from "../llm/parser.js";
 import { SYSTEM_PROMPT, getContextPrompt } from "../llm/prompts.js";
 import { Display } from "../cli/display.js";
 import {
@@ -21,6 +20,8 @@ import {
 } from "fs";
 import { join } from "path";
 import chalk from "chalk";
+import { AGENT_TOOLS } from "../llm/tools.js";
+import { ToolParser, type ParsedToolCall } from "../llm/tool-parser.js";
 
 export interface AgentConfig {
   apiKey: string;
@@ -37,7 +38,7 @@ export class Agent {
   private fileManager: FileManager;
   private executor: CodeExecutor;
   private llmClient: OpenRouterClient;
-  private parser: ResponseParser;
+  private toolParser: ToolParser;
   private projectName: string;
 
   constructor(config: AgentConfig) {
@@ -46,7 +47,7 @@ export class Agent {
     this.vfs = new VirtualFileSystem();
     this.fileManager = new FileManager(this.vfs);
     this.executor = new CodeExecutor();
-    this.parser = new ResponseParser();
+    this.toolParser = new ToolParser();
 
     // Generate project name (timestamp-based)
     this.projectName = `project_${Date.now()}`;
@@ -57,6 +58,7 @@ export class Agent {
       maxTokens: config.maxTokens,
       temperature: config.temperature,
       reasoning: config.reasoning,
+      tools: AGENT_TOOLS, // Pass our tool definitions!
     });
 
     // Add system prompt to memory
@@ -64,9 +66,9 @@ export class Agent {
   }
 
   /**
-   * Process user request
+   * Process user request avec agentic loop! 🔄
    */
-  async processRequest(userMessage: string): Promise<AgentResponse> {
+  async processRequest(userMessage: string): Promise<{ message: string }> {
     // Add user message to memory
     this.memory.addMessage("user", userMessage);
     this.memory.addTaskToHistory(userMessage);
@@ -79,7 +81,7 @@ export class Agent {
     });
 
     // Build messages for LLM
-    const messages = this.memory.getMessages();
+    const messages: any[] = this.memory.getMessages();
     if (contextPrompt) {
       messages.push({
         role: "system",
@@ -87,84 +89,119 @@ export class Agent {
       });
     }
 
-    // Get response from LLM with retry
-    let rawResponse: string;
-    try {
-      rawResponse = await this.llmClient.chatWithRetry(messages);
-    } catch (error) {
-      throw new Error(
-        `Failed to get LLM response: ${(error as Error).message}`
-      );
-    }
+    // Agentic loop - continue until we get a text response
+    const maxIterations = 10;
+    let iterationCount = 0;
+    let finalMessage = "";
 
-    // Parse response
-    const response = this.parser.parse(rawResponse);
+    while (iterationCount < maxIterations) {
+      iterationCount++;
 
-    // Add assistant response to memory
-    this.memory.addMessage("assistant", response.message);
+      // Get response from LLM
+      let responseMessage: any;
+      try {
+        responseMessage = await this.llmClient.chatWithRetry(messages);
+      } catch (error) {
+        throw new Error(
+          `Failed to get LLM response: ${(error as Error).message}`
+        );
+      }
 
-    // Execute actions if any
-    if (response.actions && response.actions.length > 0) {
-      await this.executeActions(response);
-    }
+      // Add assistant message to history
+      messages.push(responseMessage);
 
-    return response;
-  }
+      // Check if we have tool calls
+      if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+        // Process each tool call
+        const toolCalls = this.toolParser.parseToolCalls(responseMessage);
 
-  /**
-   * Execute actions from agent response
-   */
-  private async executeActions(response: AgentResponse): Promise<void> {
-    if (!response.actions) return;
+        for (const toolCall of toolCalls) {
+          // Display what we're doing
+          console.log(this.toolParser.formatToolCall(toolCall));
 
-    for (const action of response.actions) {
-      // Validate action
-      const validation = this.parser.validateAction(action);
-      if (!validation.valid) {
-        Display.error(`Invalid action: ${validation.error}`);
+          // Validate tool call
+          const validation = this.toolParser.validateToolCall(toolCall);
+          if (!validation.valid) {
+            // Add error result
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ error: validation.error }),
+            });
+            continue;
+          }
+
+          // Execute tool
+          const result = await this.executeTool(toolCall);
+
+          // Add tool result to messages
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result),
+          });
+        }
+
+        // Continue loop to get next response
         continue;
       }
 
-      // Display action
-      Display.action(this.parser.formatAction(action));
-
-      try {
-        switch (action.type) {
-          case "write_file":
-            await this.handleWriteFile(action.filename!, action.content!);
-            break;
-
-          case "read_file":
-            await this.handleReadFile(action.filename!);
-            break;
-
-          case "execute_code":
-            await this.handleExecuteCode(action.filename!);
-            break;
-
-          case "list_files":
-            await this.handleListFiles();
-            break;
-
-          case "delete_file":
-            await this.handleDeleteFile(action.filename!);
-            break;
-
-          case "create_project":
-            await this.handleCreateProject(action.projectName!);
-            break;
-
-          case "switch_project":
-            await this.handleSwitchProject(action.projectName!);
-            break;
-
-          case "list_projects":
-            await this.handleListProjects();
-            break;
-        }
-      } catch (error) {
-        Display.error(`Action failed: ${(error as Error).message}`);
+      // No tool calls - we have the final response
+      if (responseMessage.content) {
+        finalMessage = responseMessage.content;
+        this.memory.addMessage("assistant", finalMessage);
+        break;
       }
+
+      // Safety: if no content and no tool calls, break
+      break;
+    }
+
+    if (iterationCount >= maxIterations) {
+      console.warn(chalk.yellow("\n⚠️  Max iterations reached"));
+    }
+
+    return { message: finalMessage || "Task completed." };
+  }
+
+  /**
+   * Execute a single tool call and return result
+   */
+  private async executeTool(toolCall: ParsedToolCall): Promise<any> {
+    try {
+      switch (toolCall.name) {
+        case "write_file":
+          return await this.handleWriteFile(
+            toolCall.arguments.filename,
+            toolCall.arguments.content
+          );
+
+        case "read_file":
+          return await this.handleReadFile(toolCall.arguments.filename);
+
+        case "execute_code":
+          return await this.handleExecuteCode(toolCall.arguments.filename);
+
+        case "list_files":
+          return await this.handleListFiles();
+
+        case "delete_file":
+          return await this.handleDeleteFile(toolCall.arguments.filename);
+
+        case "create_project":
+          return await this.handleCreateProject(toolCall.arguments.project_name);
+
+        case "switch_project":
+          return await this.handleSwitchProject(toolCall.arguments.project_name);
+
+        case "list_projects":
+          return await this.handleListProjects();
+
+        default:
+          return { error: `Unknown tool: ${toolCall.name}` };
+      }
+    } catch (error) {
+      return { error: (error as Error).message };
     }
   }
 
@@ -174,7 +211,7 @@ export class Agent {
   private async handleWriteFile(
     filename: string,
     content: string
-  ): Promise<void> {
+  ): Promise<any> {
     this.vfs.writeFile(filename, content);
     this.memory.addFileCreated(filename);
 
@@ -197,12 +234,14 @@ export class Agent {
       };
       Display.code(content, languageMap[ext || "javascript"]);
     }
+
+    return { success: true, filename, size: content.length };
   }
 
   /**
    * Handle read file action
    */
-  private async handleReadFile(filename: string): Promise<void> {
+  private async handleReadFile(filename: string): Promise<any> {
     const content = this.vfs.readFile(filename);
 
     const ext = filename.split(".").pop() || "txt";
@@ -217,12 +256,14 @@ export class Agent {
     };
 
     Display.code(content, languageMap[ext] || "text");
+
+    return { success: true, filename, content, size: content.length };
   }
 
   /**
    * Handle execute code action
    */
-  private async handleExecuteCode(filename: string): Promise<void> {
+  private async handleExecuteCode(filename: string): Promise<any> {
     // Read file
     const code = this.vfs.readFile(filename);
 
@@ -257,22 +298,29 @@ export class Agent {
           "  3. Try a different approach"
       );
     }
+
+    return result;
   }
 
   /**
    * Handle list files action
    */
-  private async handleListFiles(): Promise<void> {
+  private async handleListFiles(): Promise<any> {
     const tree = this.fileManager.displayFileTree();
     console.log(tree);
+    
+    const files = this.vfs.listFiles().filter(f => !f.isDirectory);
+    return { success: true, fileCount: files.length, files: files.map(f => f.path) };
   }
 
   /**
    * Handle delete file action
    */
-  private async handleDeleteFile(filename: string): Promise<void> {
+  private async handleDeleteFile(filename: string): Promise<any> {
     this.vfs.deleteFile(filename);
     Display.success(`File deleted: ${filename}`);
+    
+    return { success: true, filename };
   }
 
   /**
@@ -321,7 +369,7 @@ export class Agent {
   /**
    * Handle create project action
    */
-  private async handleCreateProject(projectName: string): Promise<void> {
+  private async handleCreateProject(projectName: string): Promise<any> {
     const sanitized = projectName.replace(/[^a-zA-Z0-9_-]/g, "_");
 
     // Save current project if it has files
@@ -335,12 +383,14 @@ export class Agent {
     this.setProjectName(sanitized);
 
     Display.success(`📦 Created new project: ${sanitized}`);
+    
+    return { success: true, projectName: sanitized };
   }
 
   /**
    * Handle switch project action
    */
-  private async handleSwitchProject(projectName: string): Promise<void> {
+  private async handleSwitchProject(projectName: string): Promise<any> {
     const sanitized = projectName.replace(/[^a-zA-Z0-9_-]/g, "_");
     const workspaceDir = join(process.cwd(), "workspace");
     const projectDir = join(workspaceDir, sanitized);
@@ -350,8 +400,7 @@ export class Agent {
       Display.error(
         `Project "${sanitized}" not found. Creating new project instead...`
       );
-      await this.handleCreateProject(sanitized);
-      return;
+      return await this.handleCreateProject(sanitized);
     }
 
     // Save current project if it has files
@@ -368,17 +417,19 @@ export class Agent {
     Display.success(
       `🔄 Switched to project: ${sanitized} (${fileCount} files)`
     );
+    
+    return { success: true, projectName: sanitized, fileCount };
   }
 
   /**
    * Handle list projects action
    */
-  private async handleListProjects(): Promise<void> {
+  private async handleListProjects(): Promise<any> {
     const workspaceDir = join(process.cwd(), "workspace");
 
     if (!existsSync(workspaceDir)) {
       Display.info("No projects found. Workspace folder doesn't exist yet.");
-      return;
+      return { success: true, projects: [], currentProject: this.projectName };
     }
 
     const projects = readdirSync(workspaceDir, { withFileTypes: true })
@@ -387,7 +438,7 @@ export class Agent {
 
     if (projects.length === 0) {
       Display.info("No projects found in workspace.");
-      return;
+      return { success: true, projects: [], currentProject: this.projectName };
     }
 
     console.log(chalk.cyan("\n📋 Available Projects:\n"));
@@ -398,6 +449,8 @@ export class Agent {
       console.log(`${icon} ${color(project)}`);
     });
     console.log();
+    
+    return { success: true, projects, currentProject: this.projectName };
   }
 
   /**
@@ -468,3 +521,4 @@ export class Agent {
     return loadFiles(projectDir);
   }
 }
+

@@ -30,6 +30,7 @@ export interface OpenRouterConfig {
   maxTokens?: number;
   temperature?: number;
   reasoning?: ReasoningOptions;
+  tools?: any[]; // Tool definitions for native tool calling
 }
 
 export class OpenRouterClient {
@@ -38,6 +39,7 @@ export class OpenRouterClient {
   private maxTokens: number;
   private temperature: number;
   private reasoning?: ReasoningOptions;
+  private tools?: any[];
   private requestCount = 0;
   private totalTokens = 0;
   private totalCost = 0;
@@ -58,12 +60,13 @@ export class OpenRouterClient {
     this.maxTokens = config.maxTokens || 4096;
     this.temperature = config.temperature || 0.7;
     this.reasoning = config.reasoning;
+    this.tools = config.tools;
   }
 
   /**
-   * Envoie une requête au LLM
+   * Envoie une requête au LLM (retourne le message complet maintenant)
    */
-  async chat(messages: ChatCompletionMessageParam[]): Promise<string> {
+  async chat(messages: ChatCompletionMessageParam[]): Promise<any> {
     const startTime = Date.now();
 
     try {
@@ -80,6 +83,12 @@ export class OpenRouterClient {
           include: true,
         },
       };
+
+      // Add tools if configured (native tool calling! 🎉)
+      if (this.tools && this.tools.length > 0) {
+        requestBody.tools = this.tools;
+        requestBody.tool_choice = "auto"; // Let model decide when to use tools
+      }
 
       // Add reasoning params if configured (pour les modèles intelligents 🧠)
       if (this.reasoning) {
@@ -103,7 +112,7 @@ export class OpenRouterClient {
 
       const response = await this.client.chat.completions.create(requestBody);
 
-      const content = response.choices[0]?.message?.content || "";
+      const message = response.choices[0]?.message;
 
       // Parse usage info from OpenRouter (the good stuff 📊)
       this.updateUsageStats(response.usage);
@@ -112,12 +121,13 @@ export class OpenRouterClient {
 
       if (process.env.DEBUG === "true") {
         const tokens = response.usage?.total_tokens || "?";
+        const hasTools = message?.tool_calls ? ` | ${message.tool_calls.length} tool(s)` : "";
         console.log(
-          chalk.gray(`\n[LLM] ${this.model} | ${tokens} tokens | ${duration}ms`)
+          chalk.gray(`\n[LLM] ${this.model} | ${tokens} tokens${hasTools} | ${duration}ms`)
         );
       }
 
-      return content;
+      return message;
     } catch (error) {
       if (error instanceof Error) {
         // Handle rate limits
@@ -152,7 +162,7 @@ export class OpenRouterClient {
   async chatWithRetry(
     messages: ChatCompletionMessageParam[],
     maxRetries = 3
-  ): Promise<string> {
+  ): Promise<any> {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
