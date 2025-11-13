@@ -65,7 +65,7 @@ export class VirtualFileSystem {
       this.fs.mkdirSync(dir, { recursive: true });
     }
 
-    this.fs.writeFileSync(fullPath, content, 'utf8');
+    this.fs.writeFileSync(fullPath, content, { encoding: 'utf8' } as any);
   }
 
   /**

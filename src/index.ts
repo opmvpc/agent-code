@@ -5,6 +5,46 @@
  */
 
 import 'dotenv/config';
+
+// FORCE silent OpenAI logs AVANT tout autre import (critique! 🚫)
+// Par défaut SILENT, sauf si explicitement DEBUG=verbose
+if (process.env.DEBUG !== "verbose") {
+  process.env.OPENAI_LOG = "silent";
+
+  // BRUTAL MODE: Override console pour filtrer les logs OpenAI 💀
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  const originalDebug = console.debug;
+
+  const filterOpenAI = (...args: any[]) => {
+    const firstArg = String(args[0] || '');
+    return firstArg.startsWith('OpenAI:'); // True = filtrer
+  };
+
+  console.log = (...args: any[]) => {
+    if (filterOpenAI(...args)) return; // SILENCE! 🤫
+    originalLog.apply(console, args);
+  };
+
+  console.error = (...args: any[]) => {
+    if (filterOpenAI(...args)) return;
+    originalError.apply(console, args);
+  };
+
+  console.warn = (...args: any[]) => {
+    if (filterOpenAI(...args)) return;
+    originalWarn.apply(console, args);
+  };
+
+  console.debug = (...args: any[]) => {
+    if (filterOpenAI(...args)) return;
+    originalDebug.apply(console, args);
+  };
+} else {
+  process.env.OPENAI_LOG = "debug";
+}
+
 import chalk from 'chalk';
 import { Agent } from './core/agent.js';
 import { ChatInterface } from './cli/chat.js';
@@ -52,42 +92,37 @@ async function main() {
       });
       storageManager = new StorageManager(driver);
 
-      // Essayer de charger la dernière session pour récupérer la config modèle
-      const sessions = await storageManager.listSessions();
-      if (sessions.length > 0) {
-        const lastSession = sessions.sort().reverse()[0];
-        const sessionData = await storageManager.loadSession(lastSession);
-        if (sessionData?.modelConfig) {
-          storageManager.setModelConfig(
-            sessionData.modelConfig.modelId,
-            sessionData.modelConfig.reasoningEnabled,
-            sessionData.modelConfig.reasoningEffort
-          );
-        }
-      }
+      // Charger la config modèle depuis les métadonnées (pas depuis la session!)
+      await storageManager.loadModelConfig();
     }
 
-    // Model selection interactif!
+    // Model selection: demander SEULEMENT si pas de config sauvegardée
     const modelSelector = new ModelSelector();
     const savedModel = storageManager?.getModelConfig();
 
-    const modelSelection = await modelSelector.selectModel(savedModel?.modelId);
-
-    // Sauvegarder le choix dans le storage
-    if (storageManager) {
-      storageManager.setModelConfig(
-        modelSelection.modelId,
-        modelSelection.reasoningEnabled,
-        modelSelection.reasoningEffort
+    let modelSelection;
+    if (savedModel) {
+      // On a un modèle sauvegardé, on l'utilise direct!
+      console.log(chalk.green('✓ Using saved model configuration'));
+      modelSelection = savedModel;
+      modelSelector.displayModelInfo(
+        savedModel.modelId,
+        savedModel.reasoningEnabled,
+        savedModel.reasoningEffort
       );
-    }
+    } else {
+      // Première fois, on demande
+      modelSelection = await modelSelector.selectModel();
 
-    // Afficher les infos du modèle
-    modelSelector.displayModelInfo(
-      modelSelection.modelId,
-      modelSelection.reasoningEnabled,
-      modelSelection.reasoningEffort
-    );
+      // Sauvegarder le choix dans le storage
+      if (storageManager) {
+        await storageManager.setModelConfig(
+          modelSelection.modelId,
+          modelSelection.reasoningEnabled,
+          modelSelection.reasoningEffort
+        );
+      }
+    }
 
     // Parse reasoning options
     const reasoningOptions: any = {};
@@ -100,8 +135,7 @@ async function main() {
     const agent = new Agent({
       apiKey,
       model: modelSelection.modelId,
-      maxTokens: parseInt(process.env.MAX_TOKENS || '4096'),
-      temperature: parseFloat(process.env.TEMPERATURE || '0.7'),
+      temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
       debug: process.env.DEBUG === 'true',
       reasoning: Object.keys(reasoningOptions).length > 0 ? reasoningOptions : undefined,
       storage: {
@@ -117,7 +151,8 @@ async function main() {
       agent.getVFS(),
       agent.getFileManager(),
       agent.getMemory(),
-      agent.getLLMClient()
+      agent.getLLMClient(),
+      storageManager
     );
 
     // Create chat interface

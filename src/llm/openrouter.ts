@@ -27,7 +27,6 @@ export interface UsageDetails {
 export interface OpenRouterConfig {
   apiKey: string;
   model: string;
-  maxTokens?: number;
   temperature?: number;
   reasoning?: ReasoningOptions;
   tools?: any[]; // Tool definitions for native tool calling
@@ -36,7 +35,6 @@ export interface OpenRouterConfig {
 export class OpenRouterClient {
   private client: OpenAI;
   private model: string;
-  private maxTokens: number;
   private temperature: number;
   private reasoning?: ReasoningOptions;
   private tools?: any[];
@@ -47,9 +45,11 @@ export class OpenRouterClient {
   private totalCachedTokens = 0;
 
   constructor(config: OpenRouterConfig) {
-    // Disable OpenAI SDK verbose logging (c'est chiant 🙄)
+    // Silent mode SAUF si DEBUG=verbose (pour les vrais masochistes 🤡)
     if (process.env.DEBUG !== "verbose") {
       process.env.OPENAI_LOG = "silent";
+    } else {
+      process.env.OPENAI_LOG = "debug"; // Full spam mode pour les curieux
     }
 
     this.client = new OpenAI({
@@ -62,8 +62,7 @@ export class OpenRouterClient {
     });
 
     this.model = config.model;
-    this.maxTokens = config.maxTokens || 4096;
-    this.temperature = config.temperature || 0.7;
+    this.temperature = config.temperature || 1.0;
     this.reasoning = config.reasoning;
     this.tools = config.tools;
   }
@@ -81,7 +80,6 @@ export class OpenRouterClient {
       const requestBody: any = {
         model: this.model,
         messages,
-        max_tokens: this.maxTokens,
         temperature: this.temperature,
         // Enable usage accounting pour avoir les vrais coûts! 💰
         usage: {
@@ -93,6 +91,7 @@ export class OpenRouterClient {
       if (this.tools && this.tools.length > 0) {
         requestBody.tools = this.tools;
         requestBody.tool_choice = "auto"; // Let model decide when to use tools
+        requestBody.parallel_tool_calls = true; // Enable parallel tool execution
       }
 
       // Add reasoning params if configured (pour les modèles intelligents 🧠)
@@ -209,17 +208,20 @@ export class OpenRouterClient {
    * Yield des objets différents selon le type: content, thinking, tool_calls, usage
    */
   async *chatStream(
-    messages: ChatCompletionMessageParam[]
+    messages: ChatCompletionMessageParam[],
+    options?: { enableTools?: boolean; temperature?: number }
   ): AsyncGenerator<any> {
     try {
       this.requestCount++;
+
+      const enableTools = options?.enableTools !== false; // Default true
+      const temperature = options?.temperature ?? this.temperature;
 
       // Build request body (same as chat but with stream: true)
       const requestBody: any = {
         model: this.model,
         messages,
-        max_tokens: this.maxTokens,
-        temperature: this.temperature,
+        temperature,
         stream: true,
         // Enable usage accounting même en stream
         stream_options: {
@@ -227,10 +229,11 @@ export class OpenRouterClient {
         },
       };
 
-      // Add tools if configured
-      if (this.tools && this.tools.length > 0) {
+      // Add tools if configured AND enabled
+      if (enableTools && this.tools && this.tools.length > 0) {
         requestBody.tools = this.tools;
         requestBody.tool_choice = "auto";
+        requestBody.parallel_tool_calls = true; // Enable parallel tool execution
       }
 
       // Add reasoning params if configured
@@ -261,15 +264,39 @@ export class OpenRouterClient {
       const toolCallsMap: Map<number, any> = new Map();
       let contentBuffer = "";
 
-      for await (const chunk of stream) {
+      // Race entre le stream et le timeout
+      const streamIterator = stream[Symbol.asyncIterator]();
+
+      let lastChunkTime = Date.now();
+      while (true) {
+        // Race entre next chunk et timeout
+        const chunkPromise = streamIterator.next();
+        const chunk = await Promise.race([
+          chunkPromise,
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              const elapsed = Date.now() - lastChunkTime;
+              reject(
+                new Error(`Stream stall détecté (${elapsed}ms sans chunk)`)
+              );
+            }, 30000); // 30s entre chunks max
+          }),
+        ]);
+
+        if (chunk.done) break;
+        lastChunkTime = Date.now();
+
+        const chunkValue = chunk.value;
+        if (!chunkValue) continue;
+
         // Check for errors in stream
-        if (chunk.error) {
-          yield { type: "error", error: chunk.error };
+        if (chunkValue.error) {
+          yield { type: "error", error: chunkValue.error };
           break;
         }
 
-        const delta = chunk.choices?.[0]?.delta;
-        const finishReason = chunk.choices?.[0]?.finish_reason;
+        const delta = chunkValue.choices?.[0]?.delta;
+        const finishReason = chunkValue.choices?.[0]?.finish_reason;
 
         // Handle tool calls (they come in multiple chunks)
         if (delta?.tool_calls) {
@@ -278,14 +305,24 @@ export class OpenRouterClient {
 
             if (!toolCallsMap.has(index)) {
               // New tool call
-              toolCallsMap.set(index, {
+              const toolCall = {
                 id: toolCallDelta.id || "",
                 type: "function",
                 function: {
                   name: toolCallDelta.function?.name || "",
                   arguments: toolCallDelta.function?.arguments || "",
                 },
-              });
+              };
+              toolCallsMap.set(index, toolCall);
+
+              // Log quand on démarre un nouveau tool call
+              if (process.env.DEBUG === "verbose") {
+                console.log(
+                  `[Stream] New tool call at index ${index}: ${
+                    toolCall.function.name || "starting..."
+                  }`
+                );
+              }
             } else {
               // Append to existing tool call
               const existing = toolCallsMap.get(index);
@@ -307,14 +344,29 @@ export class OpenRouterClient {
         }
 
         // Handle thinking/reasoning (some models support this)
-        if ((chunk as any).reasoning_content) {
-          yield { type: "thinking", content: (chunk as any).reasoning_content };
+        if ((chunkValue as any).reasoning_content) {
+          yield {
+            type: "thinking",
+            content: (chunkValue as any).reasoning_content,
+          };
         }
 
         // Handle finish
         if (finishReason) {
           // Convert accumulated tool calls to array
           const toolCalls = Array.from(toolCallsMap.values());
+
+          // Log combien de tool calls on a accumulé
+          if (process.env.DEBUG === "verbose" && toolCalls.length > 0) {
+            console.log(
+              `[Stream] Finish! Accumulated ${toolCalls.length} tool call(s):`
+            );
+            toolCalls.forEach((tc, i) => {
+              console.log(
+                `  [${i}] ${tc.function.name} (args: ${tc.function.arguments.length} chars)`
+              );
+            });
+          }
 
           if (toolCalls.length > 0) {
             yield {
@@ -333,10 +385,10 @@ export class OpenRouterClient {
         }
 
         // Handle usage stats (comes at the end)
-        if (chunk.usage) {
-          this.updateUsageStats(chunk.usage);
-          this.totalTokens += chunk.usage.total_tokens || 0;
-          yield { type: "usage", usage: chunk.usage };
+        if (chunkValue.usage) {
+          this.updateUsageStats(chunkValue.usage);
+          this.totalTokens += chunkValue.usage.total_tokens || 0;
+          yield { type: "usage", usage: chunkValue.usage };
         }
       }
     } catch (error) {
@@ -377,6 +429,20 @@ export class OpenRouterClient {
         )
       );
     }
+  }
+
+  /**
+   * Get current model
+   */
+  getModel(): string {
+    return this.model;
+  }
+
+  /**
+   * Get reasoning config
+   */
+  getReasoningConfig(): ReasoningOptions | undefined {
+    return this.reasoning;
   }
 
   /**

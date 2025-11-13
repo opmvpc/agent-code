@@ -6,22 +6,31 @@
 
 import chalk from 'chalk';
 import { Display } from './display.js';
+import { ModelSelector } from './model-selector.js';
 import type { VirtualFileSystem } from '../filesystem/virtual-fs.js';
 import type { FileManager } from '../filesystem/file-manager.js';
 import type { AgentMemory } from '../core/memory.js';
 import type { OpenRouterClient } from '../llm/openrouter.js';
 import type { Agent } from '../core/agent.js';
+import type { StorageManager } from '../storage/storage-manager.js';
 import { writeFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 export class CommandHandler {
+  private storageManager?: StorageManager;
+  private modelSelector: ModelSelector;
+
   constructor(
     private agent: Agent,
     private vfs: VirtualFileSystem,
     private fileManager: FileManager,
     private memory: AgentMemory,
-    private llmClient: OpenRouterClient
-  ) {}
+    private llmClient: OpenRouterClient,
+    storageManager?: StorageManager
+  ) {
+    this.storageManager = storageManager;
+    this.modelSelector = new ModelSelector();
+  }
 
   /**
    * Check si c'est une commande spéciale
@@ -104,6 +113,15 @@ export class CommandHandler {
         await this.showSessions();
         return true;
 
+      case 'model':
+        await this.changeModel();
+        return true;
+
+      case 'todo':
+      case 'todos':
+        this.showTodos();
+        return true;
+
       case 'exit':
       case 'quit':
         this.exit();
@@ -133,6 +151,8 @@ export class CommandHandler {
       ['project [name]', 'Show or set current project name'],
       ['save [name]', 'Save project to workspace/ folder'],
       ['load <name>', 'Load project from workspace/ folder'],
+      ['model', 'Change LLM model and reasoning settings'],
+      ['todo, todos', 'Show current todo list'],
       ['stats', 'Show detailed agent statistics'],
       ['sessions', 'List all saved sessions (storage)'],
       ['export [path]', 'Export conversation memory to JSON'],
@@ -464,5 +484,76 @@ export class CommandHandler {
     }
 
     process.exit(0);
+  }
+
+  /**
+   * Affiche la todolist de l'agent
+   */
+  private showTodos(): void {
+    const todos = this.agent.getTodoManager().listTodos();
+
+    if (todos.length === 0) {
+      console.log(chalk.yellow('\n📝 No todos yet!'));
+      console.log(chalk.gray('The agent will create todos as it works on tasks.\n'));
+      return;
+    }
+
+    console.log(chalk.cyan.bold('\n📝 Current Todo List:\n'));
+
+    todos.forEach((todo, index) => {
+      const checkbox = todo.completed ? chalk.green('✓') : chalk.gray('○');
+      const taskText = todo.completed
+        ? chalk.gray.strikethrough(todo.task)
+        : chalk.white(todo.task);
+
+      console.log(`  ${checkbox} ${index + 1}. ${taskText}`);
+    });
+
+    const stats = this.agent.getTodoManager().getStats();
+    console.log();
+    console.log(
+      chalk.gray(`Total: ${stats.total} | `) +
+      chalk.green(`Completed: ${stats.completed} | `) +
+      chalk.yellow(`Pending: ${stats.pending}`)
+    );
+    console.log();
+  }
+
+  /**
+   * Change le modèle LLM en pleine session 🔄
+   */
+  private async changeModel(): Promise<void> {
+    console.log(chalk.yellow('\n🔄 Changing model configuration...\n'));
+
+    // Sélection du nouveau modèle
+    const currentModel = this.storageManager?.getModelConfig();
+    const newSelection = await this.modelSelector.selectModel(currentModel?.modelId);
+
+    // Sauvegarder dans le storage
+    if (this.storageManager) {
+      await this.storageManager.setModelConfig(
+        newSelection.modelId,
+        newSelection.reasoningEnabled,
+        newSelection.reasoningEffort
+      );
+      console.log(chalk.green('✓ Model configuration saved!'));
+    }
+
+    // Afficher les infos
+    this.modelSelector.displayModelInfo(
+      newSelection.modelId,
+      newSelection.reasoningEnabled,
+      newSelection.reasoningEffort
+    );
+
+    console.log(
+      chalk.yellow('\n⚠️  Note: Model change will take effect on next request.\n') +
+      chalk.gray('    Current conversation will continue with the current model.')
+    );
+
+    Display.warning(
+      'RESTART the agent for model change to take full effect!\n' +
+      'Or the new config will apply to future sessions only.'
+    );
   }
 }

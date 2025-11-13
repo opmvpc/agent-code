@@ -150,10 +150,27 @@ export class StorageManager {
   }
 
   /**
-   * Sauvegarde la config du modèle
+   * Sauvegarde la config du modèle (en mémoire ET sur disque)
    */
-  setModelConfig(modelId: string, reasoningEnabled: boolean, reasoningEffort: "low" | "medium" | "high"): void {
+  async setModelConfig(modelId: string, reasoningEnabled: boolean, reasoningEffort: "low" | "medium" | "high"): Promise<void> {
     this.modelConfig = { modelId, reasoningEnabled, reasoningEffort };
+
+    // Sauvegarder immédiatement sur disque!
+    try {
+      await this.driver.saveSession("model-config", {
+        projectName: "default",
+        files: {},
+        messages: [],
+        todos: [],
+        modelConfig: this.modelConfig,
+        metadata: {
+          lastSaved: new Date().toISOString(),
+          version: "1.0.0"
+        }
+      });
+    } catch (error) {
+      console.error("Failed to save model config:", error);
+    }
   }
 
   /**
@@ -161,5 +178,19 @@ export class StorageManager {
    */
   getModelConfig(): { modelId: string; reasoningEnabled: boolean; reasoningEffort: "low" | "medium" | "high" } | undefined {
     return this.modelConfig;
+  }
+
+  /**
+   * Charge la config du modèle depuis le disque
+   */
+  async loadModelConfig(): Promise<void> {
+    try {
+      const stored = await this.driver.loadSession("model-config");
+      if (stored && stored.modelConfig) {
+        this.modelConfig = stored.modelConfig;
+      }
+    } catch (error) {
+      // Pas de config sauvegardée = première fois
+    }
   }
 }

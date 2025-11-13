@@ -27,6 +27,20 @@ export class TodoManager {
   }
 
   /**
+   * Ajoute plusieurs tâches d'un coup
+   */
+  addTodos(tasks: string[]): void {
+    const now = new Date();
+    for (const task of tasks) {
+      this.todos.push({
+        task,
+        completed: false,
+        createdAt: now,
+      });
+    }
+  }
+
+  /**
    * Marque une tâche comme complétée
    */
   completeTodo(task: string): boolean {
@@ -53,6 +67,18 @@ export class TodoManager {
     const completed = this.todos.filter((t) => t.completed).length;
     const pending = total - completed;
     return { total, completed, pending };
+  }
+
+  /**
+   * Supprime une tâche spécifique
+   */
+  deleteTodo(task: string): boolean {
+    const index = this.todos.findIndex((t) => t.task === task);
+    if (index !== -1) {
+      this.todos.splice(index, 1);
+      return true;
+    }
+    return false;
   }
 
   /**

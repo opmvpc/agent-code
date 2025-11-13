@@ -52,6 +52,19 @@ export class AgentMemory {
   }
 
   /**
+   * Met à jour le message système (pour injection dynamique de la todolist)
+   */
+  updateSystemMessage(newSystemPrompt: string): void {
+    const systemMessageIndex = this.context.messages.findIndex((m) => m.role === "system");
+    if (systemMessageIndex !== -1) {
+      this.context.messages[systemMessageIndex].content = newSystemPrompt;
+    } else {
+      // Si pas de system message, on l'ajoute au début
+      this.context.messages.unshift({ role: "system", content: newSystemPrompt, timestamp: new Date() });
+    }
+  }
+
+  /**
    * Récupère tous les messages pour le LLM
    */
   getMessages(): Message[] {
@@ -127,4 +140,3 @@ export class AgentMemory {
     }
   }
 }
-
