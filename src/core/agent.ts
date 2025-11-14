@@ -868,15 +868,15 @@ export class Agent {
     const snapshot: Record<string, string> = {};
     const files = this.vfs.listFiles();
 
-    for (const file of files) {
-      if (!file.isDirectory) {
-        try {
-          snapshot[file.path] = this.vfs.readFile(file.path);
-        } catch (error) {
-          // Skip files that can't be read
-          logger.warn(`Failed to read file for snapshot: ${file.path}`);
+      for (const file of files) {
+        if (!file.isDirectory) {
+          try {
+            snapshot[file.path] = this.vfs.serializeFileContent(file.path);
+          } catch (error) {
+            // Skip files that can't be read
+            logger.warn(`Failed to read file for snapshot: ${file.path}`);
+          }
         }
-      }
     }
 
     return snapshot;
@@ -890,7 +890,7 @@ export class Agent {
 
     for (const [filePath, content] of Object.entries(snapshot)) {
       try {
-        this.vfs.writeFile(filePath, content);
+        this.vfs.writeFileFromSerialized(filePath, content);
       } catch (error) {
         logger.error(`Failed to restore file from snapshot: ${filePath}`, {
           error: (error as Error).message,
@@ -1050,7 +1050,10 @@ export class Agent {
       const files = this.vfs.listFiles();
       for (const file of files) {
         if (!file.isDirectory) {
-          const content = this.vfs.readFile(file.path);
+          const isBinary = this.vfs.isBinaryFile(file.path);
+          const content = isBinary
+            ? this.vfs.readFileBuffer(file.path)
+            : this.vfs.readFile(file.path);
           const filePath = join(projectDir, file.path);
 
           const fileDir = join(
@@ -1061,7 +1064,11 @@ export class Agent {
             mkdirSync(fileDir, { recursive: true });
           }
 
-          writeFileSync(filePath, content, "utf8");
+          if (isBinary) {
+            writeFileSync(filePath, content);
+          } else {
+            writeFileSync(filePath, content, "utf8");
+          }
         }
       }
     } catch (error) {
@@ -1087,8 +1094,11 @@ export class Agent {
         if (entry.isDirectory()) {
           count += loadFiles(fullPath, relativePath);
         } else {
-          const content = readFileSync(fullPath, "utf8");
-          this.vfs.writeFile(relativePath, content);
+          const isBinary = this.vfs.isBinaryExtension(entry.name);
+          const content = isBinary
+            ? readFileSync(fullPath)
+            : readFileSync(fullPath, "utf8");
+          this.fileManager.saveFile(relativePath, content);
           count++;
         }
       }

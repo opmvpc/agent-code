@@ -1,11 +1,11 @@
-// src/filesystem/file-manager.ts
+﻿// src/filesystem/file-manager.ts
 /**
  * File manager avec pretty printing
- * Parce que même les fichiers virtuels méritent d'être beaux ✨
+ * Parce que mÃªme les fichiers virtuels mÃ©ritent d'Ãªtre beaux âœ¨
  */
 
-import chalk from 'chalk';
-import { VirtualFileSystem, type FileInfo } from './virtual-fs.js';
+import chalk from "chalk";
+import { VirtualFileSystem, type FileInfo } from "./virtual-fs.js";
 
 export class FileManager {
   private vfs: VirtualFileSystem;
@@ -15,58 +15,75 @@ export class FileManager {
   }
 
   /**
+   * CrÃ©e/Ã©crase un fichier en s'assurant que les dossiers existent
+   */
+  saveFile(filename: string, content: string | Buffer): void {
+    this.vfs.writeFile(filename, content);
+  }
+
+  /**
    * Pretty print de l'arbre de fichiers
    */
   displayFileTree(): string {
     const files = this.vfs.listFiles();
 
     if (files.length === 0) {
-      return chalk.gray('📁 /workspace (empty - t\'as la flemme de coder?)');
+      return chalk.gray("ðŸ“ /workspace (empty - t'as la flemme de coder?)");
     }
 
-    const lines: string[] = [chalk.bold.cyan('📁 /workspace')];
+    const lines: string[] = [chalk.bold.cyan("ðŸ“ /workspace")];
     const sortedFiles = this.sortFilesForDisplay(files);
 
     // Build tree structure
     const tree = this.buildTree(sortedFiles);
-    this.renderTree(tree, '', lines);
+    this.renderTree(tree, "", lines);
 
     // Add stats
     const stats = this.vfs.getStats();
     const sizeInKB = (stats.totalSize / 1024).toFixed(2);
     const maxInMB = (stats.maxSize / 1024 / 1024).toFixed(0);
-    lines.push('');
+    lines.push("");
     lines.push(
       chalk.gray(
-        `📊 ${stats.fileCount} file(s) | ${sizeInKB}KB / ${maxInMB}MB`
+        `ðŸ“Š ${stats.fileCount} file(s) | ${sizeInKB}KB / ${maxInMB}MB`
       )
     );
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   /**
-   * Affiche les détails d'un fichier
+   * Affiche les dÃ©tails d'un fichier
    */
   displayFileInfo(filename: string): string {
     if (!this.vfs.exists(filename)) {
-      return chalk.red(`❌ File not found: ${filename}`);
+      return chalk.red(`�?O File not found: ${filename}`);
     }
 
-    const content = this.vfs.readFile(filename);
-    const lines = content.split('\n').length;
-    const size = Buffer.byteLength(content, 'utf8');
+    const isBinary = this.vfs.isBinaryFile(filename);
+    let lines = 0;
+    let size = 0;
+
+    if (isBinary) {
+      const buffer = this.vfs.readFileBuffer(filename);
+      size = buffer.length;
+    } else {
+      const content = this.vfs.readFile(filename);
+      lines = content.split("\n").length;
+      size = Buffer.byteLength(content, "utf8");
+    }
 
     const info = [
-      chalk.bold.cyan(`📄 ${filename}`),
+      chalk.bold.cyan(`�?"" ${filename}`),
       chalk.gray(`   Size: ${size} bytes`),
-      chalk.gray(`   Lines: ${lines}`),
-      chalk.gray(`   Extension: ${this.getExtension(filename) || 'none'}`),
+      isBinary
+        ? chalk.gray("   Content: binary asset (preview unavailable)")
+        : chalk.gray(`   Lines: ${lines}`),
+      chalk.gray(`   Extension: ${this.getExtension(filename) || "none"}`),
     ];
 
-    return info.join('\n');
+    return info.join("\n");
   }
-
   /**
    * Trie les fichiers pour l'affichage
    */
@@ -84,7 +101,11 @@ export class FileManager {
    * Build tree structure
    */
   private buildTree(files: FileInfo[]): TreeNode {
-    const root: TreeNode = { name: 'workspace', children: new Map(), isDirectory: true };
+    const root: TreeNode = {
+      name: "workspace",
+      children: new Map(),
+      isDirectory: true,
+    };
 
     for (const file of files) {
       const parts = file.path.split(/[/\\]/);
@@ -119,20 +140,23 @@ export class FileManager {
 
     entries.forEach(([name, child], index) => {
       const isLast = index === entries.length - 1;
-      const connector = isLast ? '└── ' : '├── ';
-      const icon = child.isDirectory ? '📁' : this.getFileIcon(child.extension);
+      const connector = isLast ? "â””â”€â”€ " : "â”œâ”€â”€ ";
+      const icon = child.isDirectory
+        ? "ðŸ“"
+        : this.getFileIcon(child.extension);
       const displayName = child.isDirectory
         ? chalk.bold.blue(name)
         : chalk.white(name);
 
-      const sizeInfo = !child.isDirectory && child.size
-        ? chalk.gray(` (${(child.size / 1024).toFixed(2)}KB)`)
-        : '';
+      const sizeInfo =
+        !child.isDirectory && child.size
+          ? chalk.gray(` (${(child.size / 1024).toFixed(2)}KB)`)
+          : "";
 
       lines.push(`${prefix}${connector}${icon} ${displayName}${sizeInfo}`);
 
       if (child.children.size > 0) {
-        const newPrefix = prefix + (isLast ? '    ' : '│   ');
+        const newPrefix = prefix + (isLast ? "    " : "â”‚   ");
         this.renderTree(child, newPrefix, lines);
       }
     });
@@ -143,17 +167,17 @@ export class FileManager {
    */
   private getFileIcon(ext?: string): string {
     const icons: Record<string, string> = {
-      '.js': '📜',
-      '.ts': '📘',
-      '.json': '📋',
-      '.txt': '📄',
-      '.md': '📝',
-      '.html': '🌐',
-      '.css': '🎨',
-      '.htm': '🌐',
+      ".js": "ðŸ“œ",
+      ".ts": "ðŸ“˜",
+      ".json": "ðŸ“‹",
+      ".txt": "ðŸ“„",
+      ".md": "ðŸ“",
+      ".html": "ðŸŒ",
+      ".css": "ðŸŽ¨",
+      ".htm": "ðŸŒ",
     };
 
-    return icons[ext || ''] || '📄';
+    return icons[ext || ""] || "ðŸ“„";
   }
 
   /**

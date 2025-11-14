@@ -1,7 +1,7 @@
-// src/llm/openrouter.ts
+﻿// src/llm/openrouter.ts
 /**
  * OpenRouter client
- * Avec le SDK OFFICIEL maintenant! 🔥
+ * Avec le SDK OFFICIEL maintenant! ðŸ”¥
  */
 
 import { OpenRouter } from "@openrouter/sdk";
@@ -42,7 +42,8 @@ export interface OpenRouterConfig {
   tools?: any[]; // Tool definitions for native tool calling
   responseFormat?: {
     type: "json_schema";
-    jsonSchema: {  // camelCase pour le SDK officiel!
+    jsonSchema: {
+      // camelCase pour le SDK officiel!
       name: string;
       description?: string;
       schema?: any;
@@ -59,6 +60,32 @@ export interface WebSearchOptions {
   context?: string;
 }
 
+export interface ImageGenerationOptions {
+  model?: string;
+  aspectRatio?: string;
+}
+
+export interface ImageGenerationResult {
+  dataUrl: string;
+  mimeType: string;
+}
+
+type AssistantImageAttachment = {
+  image_url?: { url: string };
+  imageUrl?: { url: string };
+  imageURL?: { url: string };
+};
+
+type AssistantMessageWithImages = {
+  images?: AssistantImageAttachment[];
+};
+
+const DEFAULT_IMAGE_MODEL = "google/gemini-2.5-flash-image-preview";
+const IMAGE_MODEL_FALLBACKS = [
+  "google/gemini-2.5-flash-image-preview",
+  "openai/gpt-5-image-mini",
+];
+
 export class OpenRouterClient {
   private client: OpenRouter;
   private model: string;
@@ -73,7 +100,7 @@ export class OpenRouterClient {
   private totalCachedTokens = 0;
 
   constructor(config: OpenRouterConfig) {
-    // Create OpenRouter client (le vrai SDK officiel! 🔥)
+    // Create OpenRouter client (le vrai SDK officiel! ðŸ”¥)
     this.client = new OpenRouter({
       apiKey: config.apiKey,
       serverURL: "https://openrouter.ai/api/v1",
@@ -87,8 +114,8 @@ export class OpenRouterClient {
   }
 
   /**
-   * Envoie une requête au LLM (retourne le message complet maintenant)
-   * Supporte structured outputs via response_format! 🎯
+   * Envoie une requÃªte au LLM (retourne le message complet maintenant)
+   * Supporte structured outputs via response_format! ðŸŽ¯
    */
   async chat(
     messages: Message[],
@@ -115,7 +142,7 @@ export class OpenRouterClient {
       // Tools are now in the system prompt (custom JSON format)
       // No native tool calling anymore!
 
-      // Add reasoning params if configured (pour les modèles intelligents 🧠)
+      // Add reasoning params if configured (pour les modÃ¨les intelligents ðŸ§ )
       if (this.reasoning) {
         const reasoning: any = {};
 
@@ -159,7 +186,7 @@ export class OpenRouterClient {
         });
       }
 
-      // Parse usage info from OpenRouter (the good stuff 📊)
+      // Parse usage info from OpenRouter (the good stuff ðŸ“Š)
       this.updateUsageStats(response.usage);
 
       const duration = Date.now() - startTime;
@@ -184,8 +211,8 @@ export class OpenRouterClient {
         // Handle rate limits
         if (error.message.includes("rate limit")) {
           throw new Error(
-            "Rate limit exceeded! T'abuses un peu là... 🐌\n" +
-              "Attends quelques secondes et réessaie."
+            "Rate limit exceeded! T'abuses un peu lÃ ... ðŸŒ\n" +
+              "Attends quelques secondes et rÃ©essaie."
           );
         }
 
@@ -195,7 +222,7 @@ export class OpenRouterClient {
           error.message.includes("authentication")
         ) {
           throw new Error(
-            "API key invalide! T'as copié la bonne clé? 🔑\n" +
+            "API key invalide! T'as copiÃ© la bonne clÃ©? ðŸ”‘\n" +
               "Check ton .env file."
           );
         }
@@ -207,6 +234,158 @@ export class OpenRouterClient {
     }
   }
 
+  /**
+   * Generate images via multimodal models (OpenRouter SDK)
+   */
+  async generateImage(
+    prompt: string,
+    options: ImageGenerationOptions = {}
+  ): Promise<ImageGenerationResult[]> {
+    if (!prompt?.trim()) {
+      throw new Error("Prompt is required for image generation");
+    }
+
+    const promptPreview = prompt.substring(0, 160);
+    const modelPriority = this.getImageModelPriority(options.model);
+    const errors: Array<{ model: string; error: Error }> = [];
+
+    for (const modelId of modelPriority) {
+      try {
+        return await this.generateImageWithModel(prompt, modelId, options);
+      } catch (error) {
+        errors.push({ model: modelId, error: error as Error });
+        logger.warn("[OpenRouter] Image model attempt failed", {
+          model: modelId,
+          error: (error as Error).message,
+          promptPreview,
+        });
+      }
+    }
+
+    logger.error("[OpenRouter] All image models failed", {
+      promptPreview,
+      attempts: errors.map((entry) => ({
+        model: entry.model,
+        error: entry.error.message,
+      })),
+    });
+
+    const lastError = errors.at(-1);
+    const failure = new Error(
+      `Image generation failed: ${lastError?.message || "unknown error"}`
+    );
+    (failure as any).cause = lastError;
+    throw failure;
+  }
+
+  private getImageModelPriority(requested?: string): string[] {
+    const priority: string[] = [];
+    const seen = new Set<string>();
+    const envModel = process.env.OPENROUTER_IMAGE_MODEL;
+
+    const push = (model?: string) => {
+      const trimmed = model?.trim();
+      if (trimmed && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        priority.push(trimmed);
+      }
+    };
+
+    push(requested);
+    push(envModel);
+    IMAGE_MODEL_FALLBACKS.forEach(push);
+
+    if (priority.length === 0) {
+      push(DEFAULT_IMAGE_MODEL);
+    }
+
+    return priority;
+  }
+
+  private async generateImageWithModel(
+    prompt: string,
+    modelId: string,
+    options: ImageGenerationOptions
+  ): Promise<ImageGenerationResult[]> {
+    const requestBody: any = {
+      model: modelId,
+      messages: [{ role: "user", content: prompt }],
+      modalities: ["image", "text"],
+      stream: false,
+    };
+
+    if (options.aspectRatio) {
+      requestBody.image_config = { aspect_ratio: options.aspectRatio };
+    }
+
+    try {
+      this.requestCount++;
+      const response = await this.client.chat.send(requestBody);
+      this.updateUsageStats(response?.usage);
+
+      const message = response?.choices?.[0]?.message as
+        | AssistantMessageWithImages
+        | undefined;
+      const images = message?.images;
+      if (!images || images.length === 0) {
+        logger.error("[OpenRouter] Image generation returned no images", {
+          model: modelId,
+          promptPreview: prompt.substring(0, 160),
+          fullResponse: response,
+        });
+        throw new Error("Image generation returned no images");
+      }
+
+      const results: Array<ImageGenerationResult | null> = images.map(
+        (image) => {
+          const dataUrl =
+            image?.image_url?.url ||
+            image?.imageUrl?.url ||
+            image?.imageURL?.url;
+
+          if (!dataUrl) {
+            return null;
+          }
+
+          return {
+            dataUrl,
+            mimeType: this.extractMimeTypeFromDataUrl(dataUrl),
+          };
+        }
+      );
+
+      const filtered = results.filter(
+        (item): item is ImageGenerationResult => item !== null
+      );
+
+      if (filtered.length === 0) {
+        logger.error("[OpenRouter] Image generation returned malformed data", {
+          model: modelId,
+          promptPreview: prompt.substring(0, 160),
+          fullResponse: response,
+        });
+        throw new Error("Image generation returned malformed data");
+      }
+
+      logger.info("[OpenRouter] Image generation succeeded", {
+        model: modelId,
+        count: filtered.length,
+      });
+
+      return filtered;
+    } catch (error) {
+      if ((error as Error).message !== "Image generation returned no images") {
+        logger.error("[OpenRouter] Image generation request failed", {
+          model: modelId,
+          promptPreview: prompt.substring(0, 160),
+          aspectRatio: options.aspectRatio,
+          error: (error as Error).message,
+          stack: (error as Error).stack,
+        });
+      }
+      throw error;
+    }
+  }
   /**
    * Run a web search request using the OpenRouter web plugin
    * Returns the raw assistant response so the caller can inject it in the loop
@@ -336,7 +515,7 @@ export class OpenRouterClient {
           const delay = Math.pow(2, attempt) * 1000;
           console.log(
             chalk.yellow(
-              `\n⚠️  Retry ${attempt + 1}/${maxRetries} in ${delay}ms...`
+              `\nâš ï¸  Retry ${attempt + 1}/${maxRetries} in ${delay}ms...`
             )
           );
           await this.sleep(delay);
@@ -348,8 +527,8 @@ export class OpenRouterClient {
   }
 
   /**
-   * Stream responses avec tool calls support! 🌊
-   * Yield des objets différents selon le type: content, thinking, tool_calls, usage
+   * Stream responses avec tool calls support! ðŸŒŠ
+   * Yield des objets diffÃ©rents selon le type: content, thinking, tool_calls, usage
    */
   async *chatStream(
     messages: Message[],
@@ -391,7 +570,7 @@ export class OpenRouterClient {
         }
       }
 
-      // Stream avec le SDK officiel! 🌊
+      // Stream avec le SDK officiel! ðŸŒŠ
       const stream: any = await this.client.chat.send(requestBody);
 
       // Accumulate tool calls across chunks (they come fragmented)
@@ -411,7 +590,7 @@ export class OpenRouterClient {
             setTimeout(() => {
               const elapsed = Date.now() - lastChunkTime;
               reject(
-                new Error(`Stream stall détecté (${elapsed}ms sans chunk)`)
+                new Error(`Stream stall dÃ©tectÃ© (${elapsed}ms sans chunk)`)
               );
             }, 30000); // 30s entre chunks max
           }),
@@ -449,7 +628,7 @@ export class OpenRouterClient {
               };
               toolCallsMap.set(index, toolCall);
 
-              // Log quand on démarre un nouveau tool call
+              // Log quand on dÃ©marre un nouveau tool call
               if (process.env.DEBUG === "verbose") {
                 console.log(
                   `[Stream] New tool call at index ${index}: ${
@@ -490,7 +669,7 @@ export class OpenRouterClient {
           // Convert accumulated tool calls to array
           const toolCalls = Array.from(toolCallsMap.values());
 
-          // Log combien de tool calls on a accumulé
+          // Log combien de tool calls on a accumulÃ©
           if (process.env.DEBUG === "verbose" && toolCalls.length > 0) {
             console.log(
               `[Stream] Finish! Accumulated ${toolCalls.length} tool call(s):`
@@ -539,16 +718,16 @@ export class OpenRouterClient {
     // Total tokens
     this.totalTokens += usage.total_tokens || 0;
 
-    // Reasoning tokens (si le modèle pense 🧠)
+    // Reasoning tokens (si le modÃ¨le pense ðŸ§ )
     const reasoningTokens =
       usage.completion_tokens_details?.reasoning_tokens || 0;
     this.totalReasoningTokens += reasoningTokens;
 
-    // Cached tokens (optimization FTW ⚡)
+    // Cached tokens (optimization FTW âš¡)
     const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
     this.totalCachedTokens += cachedTokens;
 
-    // Real cost from OpenRouter (enfin des vrais chiffres! 💰)
+    // Real cost from OpenRouter (enfin des vrais chiffres! ðŸ’°)
     // Cost is in credits, need to divide by 100 to get dollars
     const cost = usage.cost ? usage.cost / 100 : 0;
     this.totalCost += cost;
@@ -563,6 +742,11 @@ export class OpenRouterClient {
         )
       );
     }
+  }
+
+  private extractMimeTypeFromDataUrl(dataUrl: string): string {
+    const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+    return match?.[1] || "image/png";
   }
 
   /**
@@ -580,7 +764,7 @@ export class OpenRouterClient {
   }
 
   /**
-   * Get stats (avec les VRAIES infos maintenant! 📊)
+   * Get stats (avec les VRAIES infos maintenant! ðŸ“Š)
    */
   getStats(): {
     requests: number;
