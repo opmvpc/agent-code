@@ -38,7 +38,7 @@ Thumbs.db
 .temp/
 
 # Workspace directory (agent output files 📁)
-workspace/
+/workspace/
 
 # Agent storage directory
 .agent-storage/

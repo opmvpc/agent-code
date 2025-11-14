@@ -97,6 +97,10 @@ export class FileTool extends BaseTool {
       const lines = content.split("\n").length;
       const size = new Blob([content]).size;
 
+      // Format message with FULL content for conversation history
+      const message = `📄 File read: ${filename} (${lines} lines, ${size} bytes)\n\n` +
+        `Content:\n\`\`\`\n${content}\n\`\`\``;
+
       return {
         success: true,
         action: "read",
@@ -104,6 +108,7 @@ export class FileTool extends BaseTool {
         content,
         size,
         lines,
+        message, // ✅ Full content in message for agent to see!
       };
     } catch (error) {
       return {
@@ -429,6 +434,10 @@ export class FileTool extends BaseTool {
             totalAttempts: attempt,
           });
 
+          // Format message with FULL content for conversation history
+          const message = `✅ File created: ${generatedFilename} (${lines} lines)\n\n` +
+            `Content:\n\`\`\`\n${content}\n\`\`\``;
+
           return {
             success: true,
             action: "write",
@@ -437,6 +446,7 @@ export class FileTool extends BaseTool {
             lines,
             generated: true,
             content, // Include full content for agent's memory!
+            message, // ✅ Full content in message for conversation!
             preview: content.substring(0, 200) + "...",
           };
         } else {
@@ -638,6 +648,11 @@ export class FileTool extends BaseTool {
             totalAttempts: attempt,
           });
 
+          // Format message with FULL content for conversation history
+          const message = `✅ File edited: ${editedFilename} (${lines} lines)\n\n` +
+            `⚠️ IMPORTANT: Edit rewrites the ENTIRE file. Use sparingly for major changes or bug fixes.\n\n` +
+            `New content:\n\`\`\`\n${content}\n\`\`\``;
+
           return {
             success: true,
             action: "edit",
@@ -646,6 +661,7 @@ export class FileTool extends BaseTool {
             lines,
             modified: true,
             content, // Include full content for agent's memory!
+            message, // ✅ Full content + warning in message!
             preview: content.substring(0, 200) + "...",
           };
         } else {
