@@ -546,7 +546,8 @@ export class Agent {
         } else if (result.action === "delete") {
           return `✅ File deleted: ${result.filename}`;
         } else if (result.action === "list") {
-          return `✅ Listed ${result.count} files`;
+          // Show full tree structure for AI to see all files!
+          return `✅ Listed ${result.count} file(s):\n\n${result.tree || "No files in workspace"}`;
         }
         break;
 

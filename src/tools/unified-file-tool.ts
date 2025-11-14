@@ -119,6 +119,10 @@ export class FileTool extends BaseTool {
     try {
       const files = agent.getVFS().listFiles();
 
+      // Build tree structure récursive
+      const tree = this.buildFileTree(files);
+      const treeText = this.formatFileTree(tree);
+
       return {
         success: true,
         action: "list",
@@ -128,6 +132,7 @@ export class FileTool extends BaseTool {
           extension: f.path.split(".").pop(),
         })),
         count: files.length,
+        tree: treeText, // Structure arborescente lisible!
       };
     } catch (error) {
       return {
@@ -135,6 +140,91 @@ export class FileTool extends BaseTool {
         error: (error as Error).message,
       };
     }
+  }
+
+  /**
+   * Build hierarchical tree structure from flat file list
+   */
+  private buildFileTree(files: any[]): any {
+    const root: any = { name: ".", type: "directory", children: {} };
+
+    for (const file of files) {
+      if (file.isDirectory) continue; // Skip directories, only show files
+
+      const parts = file.path.split("/");
+      let current = root;
+
+      // Create directory structure
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (!current.children[part]) {
+          current.children[part] = {
+            name: part,
+            type: "directory",
+            children: {},
+          };
+        }
+        current = current.children[part];
+      }
+
+      // Add file at the end
+      const fileName = parts[parts.length - 1];
+      current.children[fileName] = {
+        name: fileName,
+        type: "file",
+        size: file.size,
+      };
+    }
+
+    return root;
+  }
+
+  /**
+   * Format tree structure as ASCII art (style ls -R ou tree)
+   */
+  private formatFileTree(
+    node: any,
+    prefix: string = "",
+    isLast: boolean = true
+  ): string {
+    let result = "";
+
+    if (node.name !== ".") {
+      const connector = isLast ? "└── " : "├── ";
+      const fileInfo =
+        node.type === "file" ? ` (${this.formatSize(node.size)})` : "/";
+      result += prefix + connector + node.name + fileInfo + "\n";
+    }
+
+    // Sort children: directories first, then files
+    const children = Object.values(node.children || {});
+    const dirs = children.filter((c: any) => c.type === "directory");
+    const filesOnly = children.filter((c: any) => c.type === "file");
+    const sortedChildren = [
+      ...dirs.sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      ...filesOnly.sort((a: any, b: any) => a.name.localeCompare(b.name)),
+    ];
+
+    sortedChildren.forEach((child: any, index: number) => {
+      const isLastChild = index === sortedChildren.length - 1;
+      const extension = node.name === "." ? "" : isLast ? "    " : "│   ";
+      result += this.formatFileTree(
+        child,
+        prefix + extension,
+        isLastChild
+      );
+    });
+
+    return result;
+  }
+
+  /**
+   * Format file size human-readable (B, KB, MB)
+   */
+  private formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   /**
