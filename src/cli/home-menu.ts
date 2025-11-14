@@ -46,7 +46,7 @@ export class HomeMenu {
     // Model info
     const modelConfig = this.storageManager.getModelConfig();
     const modelDisplay = modelConfig
-      ? `${modelConfig.model} ${modelConfig.reasoning ? `(${modelConfig.reasoning})` : ""}`
+      ? `${modelConfig.modelId} ${modelConfig.reasoningEnabled ? `(${modelConfig.reasoningEffort})` : ""}`
       : "Not configured";
     console.log(chalk.dim(`  Current model: ${modelDisplay}\n`));
 
@@ -189,7 +189,7 @@ export class HomeMenu {
       const modelConfig = this.storageManager.getModelConfig();
       this.projectManager.createProject(
         projectName.trim(),
-        modelConfig?.model
+        modelConfig?.modelId
       );
 
       console.log(
@@ -220,10 +220,14 @@ export class HomeMenu {
     const modelConfig = await this.modelSelector.selectModel();
 
     if (modelConfig) {
-      await this.storageManager.setModelConfig(modelConfig);
+      await this.storageManager.setModelConfig(
+        modelConfig.modelId,
+        modelConfig.reasoningEnabled,
+        modelConfig.reasoningEffort
+      );
       console.log(
         chalk.green(
-          `\n✅ Model changed to: ${modelConfig.model} ${modelConfig.reasoning ? `(${modelConfig.reasoning})` : ""}\n`
+          `\n✅ Model changed to: ${modelConfig.modelId} ${modelConfig.reasoningEnabled ? `(${modelConfig.reasoningEffort})` : ""}\n`
         )
       );
     }
@@ -239,4 +243,3 @@ export class HomeMenu {
     return this.show();
   }
 }
-

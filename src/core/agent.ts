@@ -69,12 +69,12 @@ export class Agent {
 
   constructor(config: AgentConfig) {
     this.config = config; // Save for later reload
-    
+
     // Set project context
     this.projectName = config.projectName;
     this.conversationId = config.conversationId;
     this.projectManager = config.projectManager || null;
-    
+
     // Initialize components
     this.memory = new AgentMemory(10);
     this.vfs = new VirtualFileSystem();
@@ -745,7 +745,7 @@ export class Agent {
   getVFSSnapshot(): Record<string, string> {
     const snapshot: Record<string, string> = {};
     const files = this.vfs.listFiles();
-    
+
     for (const file of files) {
       if (!file.isDirectory) {
         try {
@@ -756,7 +756,7 @@ export class Agent {
         }
       }
     }
-    
+
     return snapshot;
   }
 
@@ -765,7 +765,7 @@ export class Agent {
    */
   loadVFSSnapshot(snapshot: Record<string, string>): void {
     this.vfs.reset();
-    
+
     for (const [filePath, content] of Object.entries(snapshot)) {
       try {
         this.vfs.writeFile(filePath, content);
@@ -775,7 +775,7 @@ export class Agent {
         });
       }
     }
-    
+
     this.vfsModified = false;
   }
 
@@ -997,122 +997,6 @@ export class Agent {
   // ========================================================================
   // SESSION MANAGEMENT - Persistence
   // ========================================================================
-
-  /**
-   * Sauvegarde la session actuelle dans le storage
-   */
-  private async saveCurrentSession(): Promise<void> {
-    if (!this.storageManager) return;
-
-    try {
-      // Récupère tous les fichiers du VFS
-      const files: Record<string, string> = {};
-      const allFiles = this.vfs.listFiles().filter((f) => !f.isDirectory);
-      for (const file of allFiles) {
-        files[file.path] = this.vfs.readFile(file.path);
-      }
-
-      // Récupère les messages (simplifié)
-      const messages = this.memory.getMessages().map((msg: any) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
-
-      // Récupère les todos
-      const todos = this.todoManager.listTodos().map((todo) => ({
-        task: todo.task,
-        completed: todo.completed,
-        createdAt: todo.createdAt.toISOString(),
-      }));
-
-      // Récupère la config modèle depuis storage si dispo
-      const modelConfig = this.storageManager?.getModelConfig();
-
-      const sessionData: SessionData = {
-        projectName: this.projectName,
-        files,
-        messages,
-        todos,
-        modelConfig,
-        metadata: {
-          lastSaved: new Date().toISOString(),
-          version: "1.0.0",
-        },
-      };
-
-      await this.storageManager.saveSession(sessionData);
-    } catch (error) {
-      // Silent fail - pas critique
-      if (process.env.DEBUG === "true") {
-        console.error(chalk.gray("Note: Could not save session"));
-      }
-    }
-  }
-
-  /**
-   * Restaure la dernière session depuis le storage
-   */
-  private async restoreLastSession(): Promise<void> {
-    if (!this.storageManager) return;
-
-    try {
-      // Liste toutes les sessions et prend la plus récente
-      const sessions = await this.storageManager.listSessions();
-      if (sessions.length === 0) return;
-
-      // Trier par date (les IDs contiennent le timestamp)
-      const sortedSessions = sessions.sort().reverse();
-      const latestSession = sortedSessions[0];
-
-      const sessionData = await this.storageManager.loadSession(latestSession);
-      if (!sessionData) return;
-
-      // Restaure le nom du projet
-      this.projectName = sessionData.projectName;
-
-      // Restaure les fichiers dans le VFS
-      this.vfs.reset();
-      for (const [path, content] of Object.entries(sessionData.files)) {
-        this.vfs.writeFile(path, content);
-      }
-
-      // Restaure les messages (reset memory first)
-      this.memory = new AgentMemory(10);
-      this.memory.addMessage("system", SYSTEM_PROMPT);
-      for (const msg of sessionData.messages) {
-        if (msg.role !== "system") {
-          this.memory.addMessage(msg.role as any, msg.content || "");
-        }
-      }
-
-      // Restaure les todos
-      this.todoManager.clearTodos();
-      for (const todo of sessionData.todos) {
-        this.todoManager.addTodo(todo.task);
-        if (todo.completed) {
-          this.todoManager.completeTodo(todo.task);
-        }
-      }
-
-      console.log(
-        chalk.green(`\n📂 Session restored: ${latestSession}`) +
-          chalk.gray(
-            ` (${Object.keys(sessionData.files).length} files, ${
-              sessionData.messages.length
-            } messages)`
-          )
-      );
-    } catch (error) {
-      // Silent fail
-    }
-  }
-
-  /**
-   * Obtient le storage manager (pour les commandes)
-   */
-  getStorageManager(): StorageManager | null {
-    return this.storageManager;
-  }
 
   /**
    * Affiche les détails d'un tool call (mode debug)

@@ -98,15 +98,15 @@ async function startChat(
 
   // Parse reasoning options
   const reasoningOptions: any = {};
-  if (modelConfig.reasoning) {
+  if (modelConfig.reasoningEnabled) {
     reasoningOptions.enabled = true;
-    reasoningOptions.effort = modelConfig.reasoning;
+    reasoningOptions.effort = modelConfig.reasoningEffort;
   }
 
   // Create agent with project context
   const agent = new Agent({
     apiKey,
-    model: modelConfig.model,
+    model: modelConfig.modelId,
     temperature: 1.0,
     debug: process.env.DEBUG === 'true',
     reasoning: Object.keys(reasoningOptions).length > 0 ? reasoningOptions : undefined,
@@ -166,7 +166,11 @@ async function main() {
       // First time - select model
       const modelSelection = await modelSelector.selectModel();
       if (modelSelection) {
-        await storageManager.setModelConfig(modelSelection);
+        await storageManager.setModelConfig(
+          modelSelection.modelId,
+          modelSelection.reasoningEnabled,
+          modelSelection.reasoningEffort
+        );
       } else {
         Display.error('Model selection is required!');
         process.exit(1);

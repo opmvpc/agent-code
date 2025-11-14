@@ -32,6 +32,14 @@ export interface OpenRouterConfig {
   tools?: any[]; // Tool definitions for native tool calling
 }
 
+export interface WebSearchOptions {
+  maxResults?: number;
+  searchPrompt?: string;
+  searchContextSize?: "low" | "medium" | "high";
+  temperature?: number;
+  context?: string;
+}
+
 export class OpenRouterClient {
   private client: OpenAI;
   private model: string;
@@ -156,6 +164,117 @@ export class OpenRouterClient {
         throw new Error(`LLM request failed: ${error.message}`);
       }
 
+      throw error;
+    }
+  }
+
+  /**
+   * Run a web search request using the OpenRouter web plugin
+   * Returns the raw assistant response so the caller can inject it in the loop
+   */
+  async webSearch(
+    query: string,
+    options: WebSearchOptions = {}
+  ): Promise<any> {
+    if (!query?.trim()) {
+      throw new Error("query is required for web search");
+    }
+
+    const startTime = Date.now();
+
+    try {
+      this.requestCount++;
+
+      const requestedMax = Number.isFinite(
+        typeof options.maxResults === "number"
+          ? options.maxResults
+          : Number.NaN
+      )
+        ? Math.floor(options.maxResults as number)
+        : 5;
+
+      const normalizedMaxResults = Math.min(
+        Math.max(requestedMax || 5, 1),
+        10
+      );
+
+      const pluginConfig: any = {
+        id: "web",
+        max_results: normalizedMaxResults,
+      };
+
+      if (options.searchPrompt?.trim()) {
+        pluginConfig.search_prompt = options.searchPrompt.trim();
+      }
+
+      const systemPrompt =
+        "You are a focused research assistant. Use the attached real-time web search results to produce a concise, factual summary. Cite every claim with markdown links named using the domain (e.g. [nytimes.com](https://nytimes.com/...)). If nothing relevant is found, say so.";
+
+      const messages: ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: options.context
+            ? `${options.context.trim()}\n\nSearch query: ${query}`
+            : query,
+        },
+      ];
+
+      const requestBody: any = {
+        model: this.model,
+        messages,
+        temperature: options.temperature ?? 0.2,
+        plugins: [pluginConfig],
+        usage: {
+          include: true,
+        },
+      };
+
+      if (options.searchContextSize) {
+        requestBody.web_search_options = {
+          search_context_size: options.searchContextSize,
+        };
+      }
+
+      if (this.reasoning) {
+        const reasoning: any = {};
+        if (this.reasoning.effort) {
+          reasoning.effort = this.reasoning.effort;
+        }
+        if (this.reasoning.exclude !== undefined) {
+          reasoning.exclude = this.reasoning.exclude;
+        }
+        if (this.reasoning.enabled !== undefined) {
+          reasoning.enabled = this.reasoning.enabled;
+        }
+
+        if (Object.keys(reasoning).length > 0) {
+          requestBody.reasoning = reasoning;
+        }
+      }
+
+      const response = await this.client.chat.completions.create(requestBody);
+
+      this.updateUsageStats(response.usage);
+
+      if (process.env.DEBUG === "true") {
+        const duration = Date.now() - startTime;
+        console.log(
+          chalk.gray(
+            `[WebSearch] ${this.model} | ${normalizedMaxResults} results | ${duration}ms`
+          )
+        );
+      }
+
+      return response;
+    } catch (error) {
+      if (process.env.DEBUG === "true") {
+        console.error(
+          chalk.red(
+            `[WebSearch] Failed: ${(error as Error).message || "unknown error"}`
+          )
+        );
+      }
       throw error;
     }
   }

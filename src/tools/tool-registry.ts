@@ -12,7 +12,7 @@ import { FileTool } from "./unified-file-tool.js";
 import { ExecuteCodeTool } from "./execution-tools.js";
 import { TodoTool } from "./todo-tools.js";
 import { SendMessageTool, StopTool } from "./control-tools.js";
-import { ProjectTool } from "./unified-project-tool.js";
+import { WebSearchTool } from "./websearch-tool.js";
 
 /**
  * Registry pour gérer tous les tools disponibles
@@ -38,8 +38,8 @@ export class ToolRegistry {
     // Todo management (unified tool)
     this.register(new TodoTool());
 
-    // Project management (unified tool)
-    this.register(new ProjectTool());
+    // Web search grounding
+    this.register(new WebSearchTool());
 
     // Control flow
     this.register(new SendMessageTool());
