@@ -410,6 +410,7 @@ export class OpenRouterClient {
 
       const pluginConfig: any = {
         id: "web",
+        engine: "exa", // Always use Exa search engine ($4 per 1000 results)
         max_results: normalizedMaxResults,
       };
 

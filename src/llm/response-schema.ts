@@ -20,6 +20,8 @@ export type ToolCall = z.infer<typeof ToolCallSchema>;
 
 /**
  * Schema pour la réponse complète de l'agent
+ * NOTE: 'reasoning' n'est PAS dans ce schema car c'est l'API qui le renvoie,
+ * pas l'agent qui doit l'inclure dans son JSON!
  */
 export const AgentResponseSchema = z.object({
   mode: z.enum(["parallel", "sequential"]).describe(
@@ -27,9 +29,6 @@ export const AgentResponseSchema = z.object({
   ),
   actions: z.array(ToolCallSchema).describe(
     "List of tool calls to execute. Can be empty to stop the loop!"
-  ),
-  reasoning: z.string().optional().describe(
-    "Optional: Your reasoning for these actions (only if reasoning is enabled)"
   ),
 });
 
