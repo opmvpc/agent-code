@@ -13,6 +13,7 @@ import { ExecuteCodeTool } from "./execution-tools.js";
 import { TodoTool } from "./todo-tools.js";
 import { SendMessageTool, StopTool } from "./control-tools.js";
 import { WebSearchTool } from "./websearch-tool.js";
+import { ImageGenerationTool } from "./image-tools.js";
 
 /**
  * Registry pour gérer tous les tools disponibles
@@ -31,6 +32,7 @@ export class ToolRegistry {
   private registerDefaultTools(): void {
     // File operations (unified CRUD tool)
     this.register(new FileTool());
+    this.register(new ImageGenerationTool());
 
     // Code execution
     this.register(new ExecuteCodeTool());

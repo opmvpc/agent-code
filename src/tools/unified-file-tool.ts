@@ -420,7 +420,7 @@ export class FileTool extends BaseTool {
             );
           }
 
-          agent.getVFS().writeFile(generatedFilename, content);
+          agent.getFileManager().saveFile(generatedFilename, content);
           agent.getMemory().addFileCreated(generatedFilename);
 
           const lines = content.split("\n").length;
@@ -635,7 +635,7 @@ export class FileTool extends BaseTool {
             contentPreview: content.substring(0, 1000),
           });
 
-          agent.getVFS().writeFile(editedFilename, content);
+          agent.getFileManager().saveFile(editedFilename, content);
 
           const lines = content.split("\n").length;
           const size = new Blob([content]).size;

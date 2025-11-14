@@ -20,6 +20,7 @@ import type {
   ConversationData,
   ProjectData,
 } from "./types.js";
+import { BINARY_SNAPSHOT_PREFIX } from "../filesystem/virtual-fs.js";
 
 export class ProjectManager {
   private basePath: string;
@@ -392,7 +393,12 @@ export class ProjectManager {
         mkdirSync(fileDir, { recursive: true });
       }
 
-      writeFileSync(fullPath, content, "utf8");
+      if (content.startsWith(BINARY_SNAPSHOT_PREFIX)) {
+        const base64 = content.slice(BINARY_SNAPSHOT_PREFIX.length);
+        writeFileSync(fullPath, Buffer.from(base64, "base64"));
+      } else {
+        writeFileSync(fullPath, content, "utf8");
+      }
     }
   }
 }

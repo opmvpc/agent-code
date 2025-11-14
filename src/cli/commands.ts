@@ -197,6 +197,16 @@ export class CommandHandler {
    */
   private readFile(filename: string): void {
     try {
+      if (this.vfs.isBinaryFile(filename)) {
+        const buffer = this.vfs.readFileBuffer(filename);
+        const dataUrl = this.vfs.readFile(filename);
+        Display.info(
+          `Binary file (${buffer.length} bytes). Base64 preview:\n` +
+          `${dataUrl.substring(0, 160)}${dataUrl.length > 160 ? '...' : ''}`
+        );
+        return;
+      }
+
       const content = this.vfs.readFile(filename);
       const ext = filename.split('.').pop() || 'txt';
       const languageMap: Record<string, string> = {
@@ -256,16 +266,24 @@ export class CommandHandler {
       // Write each file to disk
       for (const file of files) {
         if (!file.isDirectory) {
-          const content = this.vfs.readFile(file.path);
+          const isBinary = this.vfs.isBinaryFile(file.path);
+          const content = isBinary
+            ? this.vfs.readFileBuffer(file.path)
+            : this.vfs.readFile(file.path);
           const filePath = join(projectDir, file.path);
 
           // Create subdirectories if needed
-          const fileDir = join(projectDir, file.path.substring(0, file.path.lastIndexOf('/') || 0));
+          const relativeDir = file.path.substring(0, file.path.lastIndexOf('/') || 0);
+          const fileDir = join(projectDir, relativeDir);
           if (fileDir !== projectDir && !existsSync(fileDir)) {
             mkdirSync(fileDir, { recursive: true });
           }
 
-          writeFileSync(filePath, content, 'utf8');
+          if (isBinary) {
+            writeFileSync(filePath, content);
+          } else {
+            writeFileSync(filePath, content, 'utf8');
+          }
         }
       }
 
@@ -308,8 +326,11 @@ export class CommandHandler {
           if (entry.isDirectory()) {
             count += loadFiles(fullPath, relativePath);
           } else {
-            const content = readFileSync(fullPath, 'utf8');
-            this.vfs.writeFile(relativePath, content);
+            const isBinary = this.vfs.isBinaryExtension(entry.name);
+            const content = isBinary
+              ? readFileSync(fullPath)
+              : readFileSync(fullPath, 'utf8');
+            this.fileManager.saveFile(relativePath, content);
             count++;
           }
         }
