@@ -238,11 +238,15 @@ export class Agent {
         );
 
         // Import structured outputs schema dynamically to avoid circular deps
-        const { getAgentResponseJsonSchema } = await import("../llm/response-schema.js");
+        const { getAgentResponseJsonSchema } = await import(
+          "../llm/response-schema.js"
+        );
         const responseFormat = getAgentResponseJsonSchema();
 
         // Call LLM to get JSON response with structured outputs! 🎯
-        const response = await this.llmClient.chat(messages, { responseFormat });
+        const response = await this.llmClient.chat(messages, {
+          responseFormat,
+        });
 
         // Extract message and reasoning
         const message = response.choices?.[0]?.message;
@@ -434,7 +438,9 @@ export class Agent {
             }
 
             // Generate unique tool call ID (format compatible with OpenAI/OpenRouter)
-            const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+            const toolCallId = `call_${Date.now()}_${Math.random()
+              .toString(36)
+              .substring(2, 11)}`;
 
             const startTime = Date.now();
             try {
@@ -461,7 +467,7 @@ export class Agent {
                 action.tool,
                 result
               );
-              
+
               // Add as proper "tool" role with toolCallId (standard LLM format)
               messages.push({
                 role: "tool",
@@ -556,7 +562,9 @@ export class Agent {
           return `✅ File deleted: ${result.filename}`;
         } else if (result.action === "list") {
           // Show full tree structure for AI to see all files!
-          return `✅ Listed ${result.count} file(s):\n\n${result.tree || "No files in workspace"}`;
+          return `✅ Listed ${result.count} file(s):\n\n${
+            result.tree || "No files in workspace"
+          }`;
         }
         break;
 
@@ -980,10 +988,8 @@ export class Agent {
           role: m.role,
           contentLength: m.content?.length || 0,
           contentPreview: m.content?.substring(0, 100),
-          tool_name: m.tool_name,
-          tool_call_id: m.tool_call_id,
-          hasToolCalls: !!m.tool_calls,
-          toolCallsCount: m.tool_calls?.length || 0,
+          toolCallId: m.toolCallId,
+          timestamp: m.timestamp,
         })),
       });
 
@@ -992,7 +998,7 @@ export class Agent {
         console.log(chalk.gray("\n[Debug] Message History:"));
         messages.forEach((m, i) => {
           const preview = m.content?.substring(0, 80).replace(/\n/g, " ") || "";
-          const toolInfo = m.tool_name ? ` (tool: ${m.tool_name})` : "";
+          const toolInfo = m.toolCallId ? ` (toolCallId: ${m.toolCallId})` : "";
           console.log(
             chalk.dim(`  ${i + 1}. [${m.role}]${toolInfo}: ${preview}...`)
           );

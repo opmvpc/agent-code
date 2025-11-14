@@ -15,6 +15,7 @@ import {
   getCodeGenerationPrompt,
   getCodeEditPrompt,
 } from "../llm/code-generation-prompt.js";
+import logger from "../utils/logger.js";
 
 export class FileTool extends BaseTool {
   readonly name = "file";
@@ -280,6 +281,11 @@ export class FileTool extends BaseTool {
 
     try {
       console.log("\n💡 Generating code with AI...");
+      logger.info("[FileTool] Starting AI code generation", {
+        action: "write",
+        filename,
+        instructionsLength: instructions.length,
+      });
 
       // Get conversation history for context
       const conversationContext = agent
@@ -296,6 +302,12 @@ export class FileTool extends BaseTool {
         conversationContext
       );
 
+      logger.debug("[FileTool] Generated prompt for code generation", {
+        filename,
+        promptLength: userPrompt.length,
+        fullPrompt: userPrompt, // Log complet du prompt
+      });
+
       // Call LLM with retry mechanism + structured outputs! 🎯
       const llmClient = agent.getLLMClient();
       const maxRetries = 5;
@@ -310,6 +322,18 @@ export class FileTool extends BaseTool {
           console.log(
             chalk.yellow(`\n[FileTool] Retry ${attempt}/${maxRetries}...`)
           );
+          logger.warn("[FileTool] Retrying code generation", {
+            attempt,
+            maxRetries,
+            filename,
+            lastError,
+          });
+        } else {
+          logger.info("[FileTool] Sending request to LLM", {
+            attempt: 1,
+            filename,
+            model: agent.getLLMClient().constructor.name,
+          });
         }
 
         // Add Zod error feedback to the prompt on retry
@@ -317,6 +341,15 @@ export class FileTool extends BaseTool {
           attempt > 1
             ? `${userPrompt}\n\n⚠️ PREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease fix the error and respond with valid JSON.`
             : userPrompt;
+
+        if (attempt > 1) {
+          logger.debug("[FileTool] Retry prompt with error feedback", {
+            filename,
+            attempt,
+            retryPromptLength: retryPrompt.length,
+            fullRetryPrompt: retryPrompt,
+          });
+        }
 
         const response = await llmClient.chat([
           {
@@ -326,6 +359,16 @@ export class FileTool extends BaseTool {
         ], { responseFormat });
 
         const rawResponse = response.choices?.[0]?.message?.content || "";
+
+        // Log la réponse brute de l'API (TOUJOURS, pas juste en DEBUG)
+        logger.info("[FileTool] Received raw response from LLM", {
+          filename,
+          attempt,
+          responseLength: rawResponse.length,
+          responsePreview: rawResponse.substring(0, 500),
+          fullResponse: rawResponse, // Réponse complète pour debug
+          usage: response.usage,
+        });
 
         if (process.env.DEBUG === "true") {
           console.log(
@@ -339,11 +382,30 @@ export class FileTool extends BaseTool {
         }
 
         // Parse with Zod validation
+        logger.debug("[FileTool] Attempting to parse response with Zod", {
+          filename,
+          attempt,
+          rawResponseLength: rawResponse.length,
+        });
+
         const parseResult = parseCodeGeneration(rawResponse);
 
         if (parseResult.success) {
           // SUCCESS! Write the file
           const { filename: generatedFilename, content } = parseResult.data;
+
+          logger.info("[FileTool] Successfully parsed code generation response", {
+            filename: generatedFilename,
+            attempt,
+            contentLength: content.length,
+            contentLines: content.split("\n").length,
+          });
+
+          logger.debug("[FileTool] Generated code content", {
+            filename: generatedFilename,
+            fullContent: content, // Log du code complet généré
+            contentPreview: content.substring(0, 1000),
+          });
 
           if (process.env.DEBUG === "true") {
             console.log(
@@ -360,6 +422,12 @@ export class FileTool extends BaseTool {
           const size = new Blob([content]).size;
 
           console.log(`✓ Code generated (${lines} lines)`);
+          logger.info("[FileTool] File successfully written", {
+            filename: generatedFilename,
+            size,
+            lines,
+            totalAttempts: attempt,
+          });
 
           return {
             success: true,
@@ -376,6 +444,16 @@ export class FileTool extends BaseTool {
           lastError = parseResult.zodErrors
             ? `Validation errors:\n${parseResult.zodErrors}`
             : parseResult.error;
+
+          logger.error("[FileTool] Failed to parse code generation response", {
+            filename,
+            attempt,
+            error: lastError,
+            zodErrors: parseResult.zodErrors,
+            rawError: parseResult.error,
+            rawResponse: rawResponse.substring(0, 1000),
+            fullRawResponse: rawResponse, // Log complet pour debug
+          });
 
           if (process.env.DEBUG === "true") {
             console.log(chalk.red(`[FileTool] Parse error: ${lastError}`));
@@ -431,6 +509,12 @@ export class FileTool extends BaseTool {
       const currentContent = agent.getVFS().readFile(filename);
 
       console.log("\n✏️  Editing code with AI...");
+      logger.info("[FileTool] Starting AI code editing", {
+        action: "edit",
+        filename,
+        currentContentLength: currentContent.length,
+        instructionsLength: instructions.length,
+      });
 
       // Get conversation history for context
       const conversationContext = agent
@@ -448,6 +532,13 @@ export class FileTool extends BaseTool {
         conversationContext
       );
 
+      logger.debug("[FileTool] Generated prompt for code editing", {
+        filename,
+        promptLength: userPrompt.length,
+        currentContentLength: currentContent.length,
+        fullPrompt: userPrompt, // Log complet du prompt
+      });
+
       // Call LLM with retry + structured outputs! 🎯
       const llmClient = agent.getLLMClient();
       const maxRetries = 5;
@@ -462,12 +553,33 @@ export class FileTool extends BaseTool {
           console.log(
             chalk.yellow(`\n[FileTool] Retry ${attempt}/${maxRetries}...`)
           );
+          logger.warn("[FileTool] Retrying code editing", {
+            attempt,
+            maxRetries,
+            filename,
+            lastError,
+          });
+        } else {
+          logger.info("[FileTool] Sending edit request to LLM", {
+            attempt: 1,
+            filename,
+            model: agent.getLLMClient().constructor.name,
+          });
         }
 
         const retryPrompt =
           attempt > 1
             ? `${userPrompt}\n\n⚠️ PREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease fix the error and respond with valid JSON.`
             : userPrompt;
+
+        if (attempt > 1) {
+          logger.debug("[FileTool] Retry prompt with error feedback (edit)", {
+            filename,
+            attempt,
+            retryPromptLength: retryPrompt.length,
+            fullRetryPrompt: retryPrompt,
+          });
+        }
 
         const response = await llmClient.chat([
           {
@@ -478,11 +590,40 @@ export class FileTool extends BaseTool {
 
         const rawResponse = response.choices?.[0]?.message?.content || "";
 
+        // Log la réponse brute de l'API (TOUJOURS, pas juste en DEBUG)
+        logger.info("[FileTool] Received raw response from LLM (edit)", {
+          filename,
+          attempt,
+          responseLength: rawResponse.length,
+          responsePreview: rawResponse.substring(0, 500),
+          fullResponse: rawResponse, // Réponse complète pour debug
+          usage: response.usage,
+        });
+
         // Parse with Zod validation
+        logger.debug("[FileTool] Attempting to parse edit response with Zod", {
+          filename,
+          attempt,
+          rawResponseLength: rawResponse.length,
+        });
+
         const parseResult = parseCodeGeneration(rawResponse);
 
         if (parseResult.success) {
           const { filename: editedFilename, content } = parseResult.data;
+
+          logger.info("[FileTool] Successfully parsed code edit response", {
+            filename: editedFilename,
+            attempt,
+            contentLength: content.length,
+            contentLines: content.split("\n").length,
+          });
+
+          logger.debug("[FileTool] Edited code content", {
+            filename: editedFilename,
+            fullContent: content, // Log du code complet édité
+            contentPreview: content.substring(0, 1000),
+          });
 
           agent.getVFS().writeFile(editedFilename, content);
 
@@ -490,6 +631,12 @@ export class FileTool extends BaseTool {
           const size = new Blob([content]).size;
 
           console.log(`✓ Code edited (${lines} lines)`);
+          logger.info("[FileTool] File successfully edited and written", {
+            filename: editedFilename,
+            size,
+            lines,
+            totalAttempts: attempt,
+          });
 
           return {
             success: true,
@@ -506,11 +653,27 @@ export class FileTool extends BaseTool {
             ? `Validation errors:\n${parseResult.zodErrors}`
             : parseResult.error;
 
+          logger.error("[FileTool] Failed to parse code edit response", {
+            filename,
+            attempt,
+            error: lastError,
+            zodErrors: parseResult.zodErrors,
+            rawError: parseResult.error,
+            rawResponse: rawResponse.substring(0, 1000),
+            fullRawResponse: rawResponse, // Log complet pour debug
+          });
+
           if (process.env.DEBUG === "true") {
             console.log(chalk.red(`[FileTool] Parse error: ${lastError}`));
           }
 
           if (attempt === maxRetries) {
+            logger.error("[FileTool] All retry attempts exhausted for edit", {
+              filename,
+              maxRetries,
+              finalError: lastError,
+            });
+
             return {
               success: false,
               error: `Failed to edit code after ${maxRetries} attempts. Last error: ${lastError}`,
