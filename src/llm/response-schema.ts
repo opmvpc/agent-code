@@ -2,9 +2,11 @@
 /**
  * Schéma Zod pour valider les réponses JSON de l'agent
  * On revient aux sources avec un système custom! 🎯
+ * Maintenant avec structured outputs support! 🔥
  */
 
 import { z } from "zod";
+import { zodToJsonSchema } from "./zod-to-json-schema.js";
 
 /**
  * Schema pour un tool call individuel
@@ -70,4 +72,18 @@ export function validateStopRule(response: AgentResponse): void {
       throw new Error("'stop' tool must be either alone or last in the sequential actions list");
     }
   }
+}
+
+/**
+ * Get JSON Schema for structured outputs (OpenRouter format)
+ */
+export function getAgentResponseJsonSchema(): {
+  type: "json_schema";
+  json_schema: {
+    name: string;
+    strict: boolean;
+    schema: any;
+  };
+} {
+  return zodToJsonSchema(AgentResponseSchema, "agent_response");
 }

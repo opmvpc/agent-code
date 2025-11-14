@@ -76,8 +76,8 @@ export class Agent {
     this.conversationId = config.conversationId;
     this.projectManager = config.projectManager || null;
 
-    // Initialize components
-    this.memory = new AgentMemory(10);
+    // Initialize components (30 messages max pour garder le contexte! 🧠)
+    this.memory = new AgentMemory(30);
     this.vfs = new VirtualFileSystem();
     this.fileManager = new FileManager(this.vfs);
     this.executor = new CodeExecutor();
@@ -237,8 +237,12 @@ export class Agent {
           this.llmClient.getReasoningConfig()
         );
 
-        // Call LLM to get JSON response (custom system!)
-        const response = await this.llmClient.chat(messages);
+        // Import structured outputs schema dynamically to avoid circular deps
+        const { getAgentResponseJsonSchema } = await import("../llm/response-schema.js");
+        const responseFormat = getAgentResponseJsonSchema();
+
+        // Call LLM to get JSON response with structured outputs! 🎯
+        const response = await this.llmClient.chat(messages, { responseFormat });
 
         // Extract message and reasoning
         const message = response.choices?.[0]?.message;

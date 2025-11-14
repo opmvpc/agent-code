@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { zodToJsonSchema } from "./zod-to-json-schema.js";
 
 /**
  * Schema Zod pour la génération de code
@@ -58,4 +59,18 @@ export function parseCodeGeneration(rawResponse: string): {
       error: `JSON parse error: ${(error as Error).message}`,
     };
   }
+}
+
+/**
+ * Get JSON Schema for structured outputs (OpenRouter format)
+ */
+export function getCodeGenerationJsonSchema(): {
+  type: "json_schema";
+  json_schema: {
+    name: string;
+    strict: boolean;
+    schema: any;
+  };
+} {
+  return zodToJsonSchema(CodeGenerationSchema, "code_generation");
 }

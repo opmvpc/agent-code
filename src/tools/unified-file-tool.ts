@@ -296,10 +296,14 @@ export class FileTool extends BaseTool {
         conversationContext
       );
 
-      // Call LLM with retry mechanism (like in agent-parser.ts!)
+      // Call LLM with retry mechanism + structured outputs! 🎯
       const llmClient = agent.getLLMClient();
       const maxRetries = 5;
       let lastError = "";
+
+      // Import schema dynamically
+      const { getCodeGenerationJsonSchema } = await import("../llm/code-generation-schema.js");
+      const responseFormat = getCodeGenerationJsonSchema();
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (attempt > 1) {
@@ -319,7 +323,7 @@ export class FileTool extends BaseTool {
             role: "user",
             content: retryPrompt,
           },
-        ]);
+        ], { responseFormat });
 
         const rawResponse = response.choices?.[0]?.message?.content || "";
 
@@ -444,10 +448,14 @@ export class FileTool extends BaseTool {
         conversationContext
       );
 
-      // Call LLM with retry (same as write!)
+      // Call LLM with retry + structured outputs! 🎯
       const llmClient = agent.getLLMClient();
       const maxRetries = 5;
       let lastError = "";
+
+      // Import schema dynamically
+      const { getCodeGenerationJsonSchema } = await import("../llm/code-generation-schema.js");
+      const responseFormat = getCodeGenerationJsonSchema();
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (attempt > 1) {
@@ -466,7 +474,7 @@ export class FileTool extends BaseTool {
             role: "user",
             content: retryPrompt,
           },
-        ]);
+        ], { responseFormat });
 
         const rawResponse = response.choices?.[0]?.message?.content || "";
 

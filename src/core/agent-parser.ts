@@ -47,9 +47,13 @@ export async function parseWithRetry(
         content: errorMessage,
       });
 
-      // Ask LLM to fix the JSON
+      // Ask LLM to fix the JSON (with structured outputs!)
       try {
-        const retryResponse = await llmClient.chat(messages);
+        // Import schema dynamically
+        const { getAgentResponseJsonSchema } = await import("../llm/response-schema.js");
+        const responseFormat = getAgentResponseJsonSchema();
+        
+        const retryResponse = await llmClient.chat(messages, { responseFormat });
 
         const retryMessage = retryResponse.choices?.[0]?.message;
         const retryReasoning = retryMessage?.reasoning;

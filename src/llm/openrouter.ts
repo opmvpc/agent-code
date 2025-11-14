@@ -31,6 +31,14 @@ export interface OpenRouterConfig {
   temperature?: number;
   reasoning?: ReasoningOptions;
   tools?: any[]; // Tool definitions for native tool calling
+  responseFormat?: {
+    type: "json_schema";
+    json_schema: {
+      name: string;
+      strict: boolean;
+      schema: any;
+    };
+  };
 }
 
 export interface WebSearchOptions {
@@ -47,6 +55,7 @@ export class OpenRouterClient {
   private temperature: number;
   private reasoning?: ReasoningOptions;
   private tools?: any[];
+  private responseFormat?: OpenRouterConfig["responseFormat"];
   private requestCount = 0;
   private totalTokens = 0;
   private totalCost = 0;
@@ -74,12 +83,17 @@ export class OpenRouterClient {
     this.temperature = config.temperature || 1.0;
     this.reasoning = config.reasoning;
     this.tools = config.tools;
+    this.responseFormat = config.responseFormat;
   }
 
   /**
    * Envoie une requête au LLM (retourne le message complet maintenant)
+   * Supporte structured outputs via response_format! 🎯
    */
-  async chat(messages: ChatCompletionMessageParam[]): Promise<any> {
+  async chat(
+    messages: ChatCompletionMessageParam[],
+    options?: { responseFormat?: OpenRouterConfig["responseFormat"] }
+  ): Promise<any> {
     const startTime = Date.now();
 
     try {
@@ -95,6 +109,12 @@ export class OpenRouterClient {
           include: true,
         },
       };
+
+      // Add structured outputs if provided (prioritize options, then config)
+      const responseFormat = options?.responseFormat || this.responseFormat;
+      if (responseFormat) {
+        requestBody.response_format = responseFormat;
+      }
 
       // Tools are now in the system prompt (custom JSON format)
       // No native tool calling anymore!
@@ -299,13 +319,14 @@ export class OpenRouterClient {
    */
   async chatWithRetry(
     messages: ChatCompletionMessageParam[],
-    maxRetries = 3
+    maxRetries = 3,
+    options?: { responseFormat?: OpenRouterConfig["responseFormat"] }
   ): Promise<any> {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await this.chat(messages);
+        return await this.chat(messages, options);
       } catch (error) {
         lastError = error as Error;
 
