@@ -92,18 +92,23 @@ export class WebSearchTool extends BaseTool {
         (assistantMessage as any).content
       );
 
+      // Parse annotations to extract structured search results
+      const searchResults = this.parseAnnotations(annotations);
+
+      // Format results for agent consumption
+      const formattedResults = this.formatSearchResults(query, content, searchResults);
+
       return {
         success: true,
         action: "websearch",
         query,
         maxResults,
         searchContextSize,
-        message: content,
-        annotations,
+        message: formattedResults,
+        results: searchResults, // Structured data
+        rawAnnotations: annotations, // Keep raw for debugging
         usage: response?.usage,
         model: response?.model,
-        note:
-          "These search results were added to the conversation. Review and use them in the next step.",
       };
     } catch (error) {
       return {
@@ -111,6 +116,74 @@ export class WebSearchTool extends BaseTool {
         error: (error as Error).message,
       };
     }
+  }
+
+  /**
+   * Parse annotations to extract URL citations
+   */
+  private parseAnnotations(annotations: any[]): Array<{
+    url: string;
+    title: string;
+    content: string;
+    startIndex?: number;
+    endIndex?: number;
+  }> {
+    return annotations
+      .filter((ann) => ann.type === "url_citation" && ann.url_citation)
+      .map((ann) => {
+        const citation = ann.url_citation;
+        return {
+          url: citation.url || "",
+          title: citation.title || "Untitled",
+          content: citation.content || "",
+          startIndex: citation.start_index,
+          endIndex: citation.end_index,
+        };
+      })
+      .filter((result) => result.url); // Only keep results with URLs
+  }
+
+  /**
+   * Format search results for agent consumption
+   */
+  private formatSearchResults(
+    query: string,
+    llmSummary: string,
+    results: Array<{ url: string; title: string; content: string }>
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(`🔍 Web Search Results for: "${query}"`);
+    parts.push("");
+
+    if (llmSummary) {
+      parts.push("📝 Summary:");
+      parts.push(llmSummary);
+      parts.push("");
+    }
+
+    if (results.length > 0) {
+      parts.push(`📚 Found ${results.length} source(s):`);
+      parts.push("");
+
+      results.forEach((result, index) => {
+        parts.push(`[${index + 1}] ${result.title}`);
+        parts.push(`🔗 ${result.url}`);
+        if (result.content) {
+          // Truncate content if too long
+          const truncated =
+            result.content.length > 500
+              ? result.content.substring(0, 500) + "..."
+              : result.content;
+          parts.push(`📄 ${truncated}`);
+        }
+        parts.push("");
+      });
+    } else {
+      parts.push("⚠️ No sources found with citations.");
+    }
+
+    return parts.join("\n");
   }
 
   /**
@@ -174,4 +247,3 @@ export class WebSearchTool extends BaseTool {
     return undefined;
   }
 }
-

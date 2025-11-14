@@ -316,7 +316,6 @@ export class Agent {
           mode: agentResponse.mode,
           actionsCount: agentResponse.actions.length,
           tools: agentResponse.actions.map((a) => a.tool),
-          reasoning: agentResponse.reasoning?.substring(0, 100),
         });
 
         // Debug info
@@ -327,13 +326,6 @@ export class Agent {
             )
           );
           console.log(chalk.dim(`Actions: ${agentResponse.actions.length}`));
-        }
-
-        // Display agent's reasoning (from JSON response) if present
-        if (agentResponse.reasoning) {
-          console.log(chalk.yellow("\n🤔 Agent's plan:"));
-          console.log(chalk.dim(agentResponse.reasoning));
-          console.log();
         }
 
         // Check if actions array is empty (one way to stop)
