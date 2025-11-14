@@ -51,8 +51,11 @@ import { ChatInterface } from './cli/chat.js';
 import { CommandHandler } from './cli/commands.js';
 import { Display } from './cli/display.js';
 import { ModelSelector } from './cli/model-selector.js';
+import { HomeMenu } from './cli/home-menu.js';
+import { ProjectMenu } from './cli/project-menu.js';
 import { StorageManager } from './storage/storage-manager.js';
 import { UnstorageDriver } from './storage/unstorage-driver.js';
+import { ProjectManager } from './workspace/project-manager.js';
 
 /**
  * Validate environment
@@ -76,95 +79,151 @@ function validateEnvironment(): { apiKey: string } {
 }
 
 /**
- * Main entry point
+ * Start chat with a specific project and conversation
+ */
+async function startChat(
+  projectName: string,
+  conversationId: string,
+  projectManager: ProjectManager,
+  storageManager: StorageManager
+) {
+  const { apiKey } = validateEnvironment();
+
+  // Get model config
+  const modelConfig = storageManager.getModelConfig();
+  if (!modelConfig) {
+    Display.error('No model configured! This should not happen.');
+    process.exit(1);
+  }
+
+  // Parse reasoning options
+  const reasoningOptions: any = {};
+  if (modelConfig.reasoning) {
+    reasoningOptions.enabled = true;
+    reasoningOptions.effort = modelConfig.reasoning;
+  }
+
+  // Create agent with project context
+  const agent = new Agent({
+    apiKey,
+    model: modelConfig.model,
+    temperature: 1.0,
+    debug: process.env.DEBUG === 'true',
+    reasoning: Object.keys(reasoningOptions).length > 0 ? reasoningOptions : undefined,
+    projectName,
+    conversationId,
+    projectManager,
+  });
+
+  // Create command handler
+  const commandHandler = new CommandHandler(
+    agent,
+    agent.getVFS(),
+    agent.getFileManager(),
+    agent.getMemory(),
+    agent.getLLMClient(),
+    storageManager
+  );
+
+  // Create chat interface
+  const chat = new ChatInterface(agent, commandHandler);
+
+  // Display project/conversation info
+  console.log(
+    chalk.cyan(`\n📁 Project: ${projectName}`) +
+      chalk.gray(` | `) +
+      chalk.cyan(`💬 Conversation: ${conversationId}\n`)
+  );
+
+  // Start chat loop
+  await chat.start();
+}
+
+/**
+ * Main entry point - New flow with menus!
  */
 async function main() {
   try {
     // Validate environment
-    const { apiKey } = validateEnvironment();
+    validateEnvironment();
 
-    // Initialize storage pour charger les préférences
-    let storageManager: StorageManager | undefined;
-    if (process.env.STORAGE_ENABLED !== 'false') {
-      const driver = new UnstorageDriver({
-        driver: (process.env.STORAGE_DRIVER as 'fs' | 'memory') || 'fs',
-        base: process.env.STORAGE_BASE_PATH || './.agent-storage',
-      });
-      storageManager = new StorageManager(driver);
+    // Initialize storage
+    const driver = new UnstorageDriver({
+      driver: 'fs',
+      base: './.agent-storage',
+    });
+    const storageManager = new StorageManager(driver);
+    await storageManager.loadModelConfig();
 
-      // Charger la config modèle depuis les métadonnées (pas depuis la session!)
-      await storageManager.loadModelConfig();
-    }
+    // Initialize project manager
+    const projectManager = new ProjectManager('./.agent-storage/projects');
 
-    // Model selection: demander SEULEMENT si pas de config sauvegardée
+    // Model selection: configure if needed
     const modelSelector = new ModelSelector();
-    const savedModel = storageManager?.getModelConfig();
+    const savedModel = storageManager.getModelConfig();
 
-    let modelSelection;
-    if (savedModel) {
-      // On a un modèle sauvegardé, on l'utilise direct!
-      console.log(chalk.green('✓ Using saved model configuration'));
-      modelSelection = savedModel;
-      modelSelector.displayModelInfo(
-        savedModel.modelId,
-        savedModel.reasoningEnabled,
-        savedModel.reasoningEffort
-      );
-    } else {
-      // Première fois, on demande
-      modelSelection = await modelSelector.selectModel();
-
-      // Sauvegarder le choix dans le storage
-      if (storageManager) {
-        await storageManager.setModelConfig(
-          modelSelection.modelId,
-          modelSelection.reasoningEnabled,
-          modelSelection.reasoningEffort
-        );
+    if (!savedModel) {
+      // First time - select model
+      const modelSelection = await modelSelector.selectModel();
+      if (modelSelection) {
+        await storageManager.setModelConfig(modelSelection);
+      } else {
+        Display.error('Model selection is required!');
+        process.exit(1);
       }
     }
 
-    // Parse reasoning options
-    const reasoningOptions: any = {};
-    if (modelSelection.reasoningEnabled) {
-      reasoningOptions.enabled = true;
-      reasoningOptions.effort = modelSelection.reasoningEffort;
+    // Main loop: Home → Project → Chat
+    while (true) {
+      // 1. Home Menu
+      const homeMenu = new HomeMenu(projectManager, modelSelector, storageManager);
+      const homeResult = await homeMenu.show();
+
+      if (homeResult.action === 'exit') {
+        console.log(chalk.yellow('\n👋 Bye!'));
+        process.exit(0);
+      }
+
+      if (homeResult.action === 'change-model') {
+        // Model changed, back to home
+        continue;
+      }
+
+      // Get project name (either selected or newly created)
+      const projectName =
+        homeResult.action === 'create-project'
+          ? homeResult.projectName!
+          : homeResult.projectName!;
+
+      // 2. Project Menu
+      const projectMenu = new ProjectMenu(projectManager, projectName);
+      const projectResult = await projectMenu.show();
+
+      if (projectResult.action === 'back') {
+        // Back to home
+        continue;
+      }
+
+      // Get conversation ID (either selected or newly created)
+      let conversationId: string;
+      if (projectResult.action === 'create-conversation') {
+        // New conversation was created
+        conversationId = projectResult.conversationId!;
+      } else {
+        // Existing conversation selected
+        conversationId = projectResult.conversationId!;
+      }
+
+      // 3. Start chat
+      await startChat(projectName, conversationId, projectManager, storageManager);
+
+      // After chat ends (user exited), go back to project menu
+      // (ou home menu selon ce qu'on veut)
     }
-
-    // Create agent
-    const agent = new Agent({
-      apiKey,
-      model: modelSelection.modelId,
-      temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
-      debug: process.env.DEBUG === 'true',
-      reasoning: Object.keys(reasoningOptions).length > 0 ? reasoningOptions : undefined,
-      storage: {
-        enabled: process.env.STORAGE_ENABLED !== 'false',
-        driver: (process.env.STORAGE_DRIVER as 'fs' | 'memory') || 'fs',
-        basePath: process.env.STORAGE_BASE_PATH || './.agent-storage',
-      },
-    });
-
-    // Create command handler
-    const commandHandler = new CommandHandler(
-      agent,
-      agent.getVFS(),
-      agent.getFileManager(),
-      agent.getMemory(),
-      agent.getLLMClient(),
-      storageManager
-    );
-
-    // Create chat interface
-    const chat = new ChatInterface(agent, commandHandler);
-
-    // Start chat loop
-    await chat.start();
-
   } catch (error) {
     Display.error(
       `Fatal error: ${(error as Error).message}\n\n` +
-      `Stack trace:\n${(error as Error).stack}`
+        `Stack trace:\n${(error as Error).stack}`
     );
     process.exit(1);
   }

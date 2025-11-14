@@ -16,7 +16,6 @@ export * from "./unified-file-tool.js";
 export * from "./execution-tools.js";
 export * from "./todo-tools.js";
 export * from "./control-tools.js";
-export * from "./unified-project-tool.js";
 
 // Tool registry
 export { ToolRegistry, toolRegistry } from "./tool-registry.js";

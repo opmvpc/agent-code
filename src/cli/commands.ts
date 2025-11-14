@@ -81,26 +81,6 @@ export class CommandHandler {
         }
         return true;
 
-      case 'save':
-        this.saveToWorkspace(args[0]);
-        return true;
-
-      case 'load':
-        if (args.length > 0) {
-          this.loadFromWorkspace(args[0]);
-        } else {
-          Display.error('Usage: /load <project-name>');
-        }
-        return true;
-
-      case 'project':
-        if (args.length > 0) {
-          this.setProjectName(args.join(' '));
-        } else {
-          this.showProjectName();
-        }
-        return true;
-
       case 'stats':
         this.showStats();
         return true;

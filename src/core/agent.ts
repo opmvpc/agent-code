@@ -47,11 +47,10 @@ export interface AgentConfig {
   temperature?: number;
   debug?: boolean;
   reasoning?: ReasoningOptions;
-  storage?: {
-    enabled?: boolean;
-    driver?: "fs" | "memory";
-    basePath?: string;
-  };
+  // New: Project and conversation context
+  projectName: string;
+  conversationId: string;
+  projectManager?: any; // ProjectManager instance
 }
 
 export class Agent {
@@ -61,13 +60,21 @@ export class Agent {
   private executor: CodeExecutor;
   private llmClient: OpenRouterClient;
   private todoManager: TodoManager;
-  private storageManager: StorageManager | null = null;
   private projectName: string;
+  private conversationId: string;
+  private projectManager: any | null = null;
+  private vfsModified: boolean = false; // Track if VFS has changes
   private lastActions: Array<{ tool: string; result: any }> = [];
   private config: AgentConfig; // Store config for reload
 
   constructor(config: AgentConfig) {
     this.config = config; // Save for later reload
+    
+    // Set project context
+    this.projectName = config.projectName;
+    this.conversationId = config.conversationId;
+    this.projectManager = config.projectManager || null;
+    
     // Initialize components
     this.memory = new AgentMemory(10);
     this.vfs = new VirtualFileSystem();
@@ -75,29 +82,15 @@ export class Agent {
     this.executor = new CodeExecutor();
     this.todoManager = new TodoManager();
 
-    // Generate project name (timestamp-based)
-    this.projectName = `project_${Date.now()}`;
-
     // Initialize LLM client
     this.llmClient = this.createLLMClient();
-
-    // Initialize storage if enabled
-    if (config.storage?.enabled !== false) {
-      const driver = new UnstorageDriver({
-        driver: config.storage?.driver || "fs",
-        base: config.storage?.basePath || "./.agent-storage",
-      });
-      this.storageManager = new StorageManager(driver);
-    }
 
     // Add system prompt to memory
     this.memory.addMessage("system", SYSTEM_PROMPT);
 
-    // Try to restore last session if storage is enabled
-    if (this.storageManager) {
-      this.restoreLastSession().catch(() => {
-        // Silent fail - start fresh if no session
-      });
+    // Load conversation data if available
+    if (this.projectManager) {
+      this.loadConversation();
     }
   }
 
@@ -471,9 +464,24 @@ export class Agent {
       console.warn(chalk.yellow("\n⚠️  Max iterations reached"));
     }
 
-    // Save session at the end of request
-    if (this.storageManager?.isAutoSaveEnabled()) {
-      await this.saveCurrentSession();
+    // Auto-save conversation data
+    this.saveConversation();
+
+    // Export to workspace/ if VFS has changes
+    if (this.hasVFSChanges() && this.projectManager) {
+      try {
+        this.projectManager.exportToWorkspace(
+          this.projectName,
+          this.getVFSSnapshot()
+        );
+        console.log(
+          chalk.green(`\n📁 Workspace updated: workspace/${this.projectName}/`)
+        );
+      } catch (error) {
+        logger.error("Failed to export to workspace", {
+          error: (error as Error).message,
+        });
+      }
     }
 
     return { message: finalMessage || "Task completed." };
@@ -711,6 +719,138 @@ export class Agent {
    */
   getProjectName(): string {
     return this.projectName;
+  }
+
+  getConversationId(): string {
+    return this.conversationId;
+  }
+
+  /**
+   * Check if VFS has been modified
+   */
+  hasVFSChanges(): boolean {
+    return this.vfsModified;
+  }
+
+  /**
+   * Mark VFS as modified (called by tools when files change)
+   */
+  markVFSModified(): void {
+    this.vfsModified = true;
+  }
+
+  /**
+   * Get VFS snapshot (all files as JSON)
+   */
+  getVFSSnapshot(): Record<string, string> {
+    const snapshot: Record<string, string> = {};
+    const files = this.vfs.listFiles();
+    
+    for (const file of files) {
+      if (!file.isDirectory) {
+        try {
+          snapshot[file.path] = this.vfs.readFile(file.path);
+        } catch (error) {
+          // Skip files that can't be read
+          logger.warn(`Failed to read file for snapshot: ${file.path}`);
+        }
+      }
+    }
+    
+    return snapshot;
+  }
+
+  /**
+   * Load VFS from snapshot
+   */
+  loadVFSSnapshot(snapshot: Record<string, string>): void {
+    this.vfs.reset();
+    
+    for (const [filePath, content] of Object.entries(snapshot)) {
+      try {
+        this.vfs.writeFile(filePath, content);
+      } catch (error) {
+        logger.error(`Failed to restore file from snapshot: ${filePath}`, {
+          error: (error as Error).message,
+        });
+      }
+    }
+    
+    this.vfsModified = false;
+  }
+
+  /**
+   * Load conversation data from ProjectManager
+   */
+  private loadConversation(): void {
+    if (!this.projectManager) {
+      return;
+    }
+
+    try {
+      const convData = this.projectManager.loadConversation(
+        this.projectName,
+        this.conversationId
+      );
+
+      // Restore messages
+      convData.messages.forEach((msg: any) => {
+        this.memory.addMessage(msg.role, msg.content);
+      });
+
+      // Restore todos
+      convData.todos.forEach((todo: any) => {
+        this.todoManager.addTodo(todo.task);
+        if (todo.completed) {
+          this.todoManager.completeTodo(todo.task);
+        }
+      });
+
+      // Restore VFS
+      this.loadVFSSnapshot(convData.vfs);
+
+      logger.info("Conversation loaded", {
+        project: this.projectName,
+        conversation: this.conversationId,
+        messages: convData.messages.length,
+        todos: convData.todos.length,
+        files: Object.keys(convData.vfs).length,
+      });
+    } catch (error) {
+      logger.warn("Could not load conversation, starting fresh", {
+        error: (error as Error).message,
+      });
+    }
+  }
+
+  /**
+   * Save conversation data to ProjectManager
+   */
+  private saveConversation(): void {
+    if (!this.projectManager) {
+      return;
+    }
+
+    try {
+      this.projectManager.saveConversation(
+        this.projectName,
+        this.conversationId,
+        {
+          messages: this.memory.getMessages(),
+          todos: this.todoManager.listTodos(),
+          vfs: this.getVFSSnapshot(),
+        }
+      );
+
+      logger.info("Conversation saved", {
+        project: this.projectName,
+        conversation: this.conversationId,
+      });
+    } catch (error) {
+      logger.error("Failed to save conversation", {
+        error: (error as Error).message,
+      });
+    }
   }
 
   /**
