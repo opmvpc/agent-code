@@ -55,9 +55,12 @@ export class ProjectMenu {
             ? "1 message"
             : `${conv.messageCount} messages`;
 
+        // Si pas de nom, utiliser un nom par défaut temporaire
+        const displayName = conv.name || `New conversation (${conv.id})`;
+
         console.log(
           chalk.cyan(`    ${index + 1}.`) +
-            ` ${conv.name || conv.id}` +
+            ` ${displayName}` +
             "\n" +
             chalk.dim(`       ${msgsText}, ${filesText} • ${timeAgo}`)
         );
@@ -130,8 +133,9 @@ export class ProjectMenu {
         choices: [
           ...conversations.map((conv) => {
             const timeAgo = this.formatTimeAgo(conv.lastModified);
+            const displayName = conv.name || `New conversation (${conv.id})`;
             return {
-              name: `${conv.name || conv.id} (${conv.messageCount} messages, ${timeAgo})`,
+              name: `${displayName} (${conv.messageCount} messages, ${timeAgo})`,
               value: conv.id,
             };
           }),
@@ -212,4 +216,3 @@ export class ProjectMenu {
     return date.toLocaleDateString();
   }
 }
-

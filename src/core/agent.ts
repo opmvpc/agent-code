@@ -188,7 +188,12 @@ export class Agent {
   /**
    * Process user request avec agentic loop + STREAMING! 🌊
    */
-  async processRequest(userMessage: string): Promise<{ message: string }> {
+  async processRequest(
+    userMessage: string
+  ): Promise<{ message: string; shouldGenerateTitle?: boolean }> {
+    // Check if this is the first user message (BEFORE adding it!)
+    const isFirstMessage =
+      this.memory.getMessages().filter((m) => m.role === "user").length === 0;
     // Add user message to memory
     this.memory.addMessage("user", userMessage);
     this.memory.addTaskToHistory(userMessage);
@@ -316,6 +321,12 @@ export class Agent {
           console.log(chalk.yellow("\n🤔 Agent's plan:"));
           console.log(chalk.dim(agentResponse.reasoning));
           console.log();
+        }
+
+        // Check if actions array is empty (one way to stop)
+        if (agentResponse.actions.length === 0) {
+          console.log(chalk.green("\n✅ Agent finished - no more actions"));
+          break;
         }
 
         // Execute actions based on mode
@@ -467,16 +478,22 @@ export class Agent {
     // Auto-save conversation data
     this.saveConversation();
 
-    // Export to workspace/ if VFS has changes
-    if (this.hasVFSChanges() && this.projectManager) {
+    // Export to workspace/ if VFS has changes (always export to show current state)
+    if (this.projectManager) {
       try {
         this.projectManager.exportToWorkspace(
           this.projectName,
           this.getVFSSnapshot()
         );
-        console.log(
-          chalk.green(`\n📁 Workspace updated: workspace/${this.projectName}/`)
-        );
+
+        const fileCount = Object.keys(this.getVFSSnapshot()).length;
+        if (fileCount > 0) {
+          console.log(
+            chalk.green(
+              `\n📁 Workspace exported: workspace/${this.projectName}/ (${fileCount} files)`
+            )
+          );
+        }
       } catch (error) {
         logger.error("Failed to export to workspace", {
           error: (error as Error).message,
@@ -484,7 +501,10 @@ export class Agent {
       }
     }
 
-    return { message: finalMessage || "Task completed." };
+    return {
+      message: finalMessage || "Task completed.",
+      shouldGenerateTitle: isFirstMessage, // Signal qu'il faut générer un titre
+    };
   }
 
   /**
@@ -806,15 +826,16 @@ export class Agent {
         }
       });
 
-      // Restore VFS
-      this.loadVFSSnapshot(convData.vfs);
+      // Restore VFS from project level (shared across conversations!)
+      const projectVfs = this.projectManager.loadProjectVFS(this.projectName);
+      this.loadVFSSnapshot(projectVfs);
 
       logger.info("Conversation loaded", {
         project: this.projectName,
         conversation: this.conversationId,
         messages: convData.messages.length,
         todos: convData.todos.length,
-        files: Object.keys(convData.vfs).length,
+        files: Object.keys(projectVfs).length,
       });
     } catch (error) {
       logger.warn("Could not load conversation, starting fresh", {
@@ -832,14 +853,21 @@ export class Agent {
     }
 
     try {
+      // Save conversation data (messages + todos)
       this.projectManager.saveConversation(
         this.projectName,
         this.conversationId,
         {
           messages: this.memory.getMessages(),
           todos: this.todoManager.listTodos(),
-          vfs: this.getVFSSnapshot(),
+          // vfs removed - saved separately at project level
         }
+      );
+
+      // Save VFS at project level (shared across conversations!)
+      this.projectManager.saveProjectVFS(
+        this.projectName,
+        this.getVFSSnapshot()
       );
 
       logger.info("Conversation saved", {

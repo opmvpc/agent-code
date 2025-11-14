@@ -103,7 +103,7 @@ export class SendMessageTool extends BaseTool {
 export class StopTool extends BaseTool {
   readonly name = "stop";
   readonly description =
-    "Signal that you have completed ALL tasks and are ready to finish. Only call this when everything is done!";
+    "🛑 STOP the agentic loop and return control to the user. Call this when: 1) You've completed all requested tasks, 2) You've answered the user's question, 3) You've sent a message and there's nothing left to do. CRITICAL: Always call stop after finishing work, or return an empty actions array.";
 
   protected getParametersSchema() {
     return {

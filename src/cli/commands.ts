@@ -19,6 +19,7 @@ import { join } from 'path';
 export class CommandHandler {
   private storageManager?: StorageManager;
   private modelSelector: ModelSelector;
+  private shouldExitToProjectMenu = false;
 
   constructor(
     private agent: Agent,
@@ -30,6 +31,20 @@ export class CommandHandler {
   ) {
     this.storageManager = storageManager;
     this.modelSelector = new ModelSelector();
+  }
+
+  /**
+   * Check if user wants to exit to project menu
+   */
+  getShouldExitToProjectMenu(): boolean {
+    return this.shouldExitToProjectMenu;
+  }
+
+  /**
+   * Reset exit flag
+   */
+  resetExitFlag(): void {
+    this.shouldExitToProjectMenu = false;
   }
 
   /**

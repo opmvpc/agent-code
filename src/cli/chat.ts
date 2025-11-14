@@ -13,15 +13,24 @@ import type { Agent } from '../core/agent.js';
 
 export class ChatInterface {
   private commandHandler: CommandHandler;
+  private onTitleGenerated?: (title: string) => void;
 
   constructor(private agent: Agent, commandHandler: CommandHandler) {
     this.commandHandler = commandHandler;
   }
 
   /**
-   * Démarre la boucle de chat
+   * Set callback for when title is generated
    */
-  async start(): Promise<void> {
+  setOnTitleGenerated(callback: (title: string) => void): void {
+    this.onTitleGenerated = callback;
+  }
+
+  /**
+   * Démarre la boucle de chat
+   * Returns true if user wants to exit to project menu
+   */
+  async start(): Promise<boolean> {
     Display.showBanner();
 
     // Show welcome message with project info
@@ -36,17 +45,24 @@ export class ChatInterface {
 
     // Main chat loop
     while (true) {
-      const shouldContinue = await this.chatLoop();
-      if (!shouldContinue) {
-        break;
+      const result = await this.chatLoop();
+      if (result === 'exit-to-project-menu') {
+        return true; // Exit to project menu
       }
+      if (result === 'exit-program') {
+        return false; // Exit completely
+      }
+      // result === 'continue', keep looping
     }
+
+    return false; // Should never reach here
   }
 
   /**
    * Une itération de la boucle de chat
+   * Returns 'continue', 'exit-to-project-menu', or 'exit-program'
    */
-  private async chatLoop(): Promise<boolean> {
+  private async chatLoop(): Promise<'continue' | 'exit-to-project-menu' | 'exit-program'> {
     try {
       // Get user input
       const answers = await inquirer.prompt([
@@ -62,12 +78,24 @@ export class ChatInterface {
 
       // Check for empty message
       if (!userMessage) {
-        return true;
+        return 'continue';
       }
 
       // Check for commands
       if (this.commandHandler.isCommand(userMessage)) {
-        return await this.commandHandler.execute(userMessage);
+        const shouldContinue = await this.commandHandler.execute(userMessage);
+
+        // Check if user wants to exit to project menu
+        if (this.commandHandler.getShouldExitToProjectMenu()) {
+          this.commandHandler.resetExitFlag();
+          return 'exit-to-project-menu';
+        }
+
+        if (!shouldContinue) {
+          return 'exit-program'; // Complete exit (shouldn't happen with new /exit)
+        }
+
+        return 'continue';
       }
 
       // Process with agent
@@ -75,6 +103,12 @@ export class ChatInterface {
 
       try {
         const response = await this.agent.processRequest(userMessage);
+
+        // Generate title asynchronously if this was the first message
+        if (response.shouldGenerateTitle && this.onTitleGenerated) {
+          // Don't await - generate title in background
+          this.generateTitleAsync();
+        }
 
         // Le message est déjà affiché par le streaming!
         // On affiche juste un divider pour séparer
@@ -95,14 +129,40 @@ export class ChatInterface {
         }
       }
 
-      return true;
+      return 'continue';
     } catch (error) {
       // Handle Ctrl+C
       if ((error as Error).message.includes('User force closed')) {
         console.log(chalk.yellow('\n\n👋 Bye!'));
-        return false;
+        return 'exit-program';
       }
       throw error;
+    }
+  }
+
+  /**
+   * Generate conversation title asynchronously
+   */
+  private async generateTitleAsync(): Promise<void> {
+    try {
+      const { generateConversationTitle } = await import("../llm/title-generator.js");
+
+      const messages = this.agent.getMemory().getMessages()
+        .filter(m => m.role !== "system")
+        .map(m => ({ role: m.role, content: m.content || "" }));
+
+      if (messages.length < 2) return; // Need at least user + assistant message
+
+      const title = await generateConversationTitle(
+        this.agent.getLLMClient(),
+        messages
+      );
+
+      if (this.onTitleGenerated) {
+        this.onTitleGenerated(title);
+      }
+    } catch (error) {
+      // Silent fail - title generation is not critical
     }
   }
 

@@ -64,6 +64,35 @@ Your response format:
 - ✅ DO: Return pure JSON object directly
 - ✅ DO: Use send_message tool to communicate with user
 
+## 🛑 CRITICAL: HOW TO STOP THE LOOP
+
+You MUST stop the loop when you're done working. There are TWO ways:
+
+**Method 1: Return empty actions array**
+\`\`\`json
+{
+  "mode": "sequential",
+  "actions": []
+}
+\`\`\`
+
+**Method 2: Call the stop tool (alone, in sequential mode)**
+\`\`\`json
+{
+  "mode": "sequential",
+  "actions": [
+    { "tool": "stop", "args": {} }
+  ]
+}
+\`\`\`
+
+**When to stop:**
+- ✅ After completing ALL requested tasks
+- ✅ After answering the user's question
+- ✅ After sending a message with send_message and there's nothing more to do
+- ✅ After a simple greeting (say hi with send_message, then stop!)
+- ❌ DON'T loop forever - if you just communicated or finished work → STOP!
+
 ## HOW YOU WORK (Agentic Loop with Parallel Execution):
 
 You operate in an **iterative loop** where each iteration is about TOOL CALLS:
@@ -308,10 +337,11 @@ ${examplesSection}
 - Respond with JSON ONLY (no markdown, no text)
 - Use "parallel" for independent actions
 - Use "sequential" for dependent steps
-- stop tool: In sequential mode, either ALONE or as LAST action in the list
+- **STOP when done**: Return empty actions array OR call stop tool
+- stop tool: In sequential mode, either ALONE or as LAST action
 - send_message: for ALL user communication
-- **IMPORTANT**: After simple responses, include stop as the last action
-- **Don't loop forever**: When done → add stop as last sequential action!
+- **CRITICAL**: After finishing work → STOP IMMEDIATELY (empty array or stop tool)
+- **Don't loop forever**: If there's nothing left to do → STOP NOW!
 `;
 }
 

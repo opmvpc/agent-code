@@ -128,6 +128,12 @@ async function startChat(
   // Create chat interface
   const chat = new ChatInterface(agent, commandHandler);
 
+  // Set up title generation callback
+  chat.setOnTitleGenerated((title: string) => {
+    projectManager.updateConversationTitle(projectName, conversationId, title);
+    console.log(chalk.gray(`\n✨ Conversation title updated: "${title}"\n`));
+  });
+
   // Display project/conversation info
   console.log(
     chalk.cyan(`\n📁 Project: ${projectName}`) +
@@ -135,8 +141,9 @@ async function startChat(
       chalk.cyan(`💬 Conversation: ${conversationId}\n`)
   );
 
-  // Start chat loop
-  await chat.start();
+  // Start chat loop - returns true if user wants to exit to project menu
+  const shouldReturnToProjectMenu = await chat.start();
+  return shouldReturnToProjectMenu;
 }
 
 /**
@@ -219,10 +226,22 @@ async function main() {
       }
 
       // 3. Start chat
-      await startChat(projectName, conversationId, projectManager, storageManager);
+      const shouldReturnToProjectMenu = await startChat(
+        projectName,
+        conversationId,
+        projectManager,
+        storageManager
+      );
 
-      // After chat ends (user exited), go back to project menu
-      // (ou home menu selon ce qu'on veut)
+      // If user used /exit, return to project menu
+      // Otherwise loop back to home menu
+      if (!shouldReturnToProjectMenu) {
+        // User quit completely - shouldn't happen with new /exit behavior
+        console.log(chalk.yellow('\n👋 Bye!'));
+        process.exit(0);
+      }
+
+      // Loop back to project menu for this project
     }
   } catch (error) {
     Display.error(
