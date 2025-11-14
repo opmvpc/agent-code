@@ -159,25 +159,15 @@ export class ProjectMenu {
   }
 
   /**
-   * Crée une nouvelle conversation
+   * Crée une nouvelle conversation (titre auto-généré!)
    */
   private async createConversation(): Promise<ProjectMenuResult> {
-    const { conversationName } = await inquirer.prompt([
-      {
-        type: "input",
-        name: "conversationName",
-        message: "Conversation name (optional):",
-      },
-    ]);
-
+    // NO PROMPT! Title is FULLY AUTOMATIC via AI
     try {
-      const conv = this.projectManager.createConversation(
-        this.projectName,
-        conversationName || undefined
-      );
+      const conv = this.projectManager.createConversation(this.projectName);
 
       console.log(
-        chalk.green(`\n✅ Conversation "${conv.name}" created!\n`)
+        chalk.gray(`\n✨ New conversation created (title will be generated automatically)\n`)
       );
 
       return {

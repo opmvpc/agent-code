@@ -101,14 +101,19 @@ export class ChatInterface {
       // Process with agent
       Display.divider();
 
-      try {
-        const response = await this.agent.processRequest(userMessage);
+          try {
+            const response = await this.agent.processRequest(userMessage);
 
-        // Generate title asynchronously if this was the first message
-        if (response.shouldGenerateTitle && this.onTitleGenerated) {
-          // Don't await - generate title in background
-          this.generateTitleAsync();
-        }
+            // Generate title asynchronously if this was the first message
+            if (response.shouldGenerateTitle) {
+              if (this.onTitleGenerated) {
+                console.log(chalk.gray("\n[Chat] First message detected - will generate title after response"));
+                // Don't await - generate title in background
+                this.generateTitleAsync();
+              } else {
+                console.log(chalk.yellow("\n[Chat] Warning: shouldGenerateTitle=true but no callback registered!"));
+              }
+            }
 
         // Le message est déjà affiché par le streaming!
         // On affiche juste un divider pour séparer
@@ -151,18 +156,27 @@ export class ChatInterface {
         .filter(m => m.role !== "system")
         .map(m => ({ role: m.role, content: m.content || "" }));
 
-      if (messages.length < 2) return; // Need at least user + assistant message
+      if (messages.length < 2) {
+        console.log(chalk.gray("[TitleGen] Not enough messages yet (need at least user + assistant)"));
+        return; // Need at least user + assistant message
+      }
+
+      console.log(chalk.gray("\n[TitleGen] Generating conversation title..."));
 
       const title = await generateConversationTitle(
         this.agent.getLLMClient(),
         messages
       );
 
+      console.log(chalk.gray(`[TitleGen] Generated title: "${title}"`));
+
       if (this.onTitleGenerated) {
         this.onTitleGenerated(title);
+      } else {
+        console.log(chalk.yellow("[TitleGen] Warning: No callback registered!"));
       }
     } catch (error) {
-      // Silent fail - title generation is not critical
+      console.error(chalk.red(`[TitleGen] Failed to generate title: ${(error as Error).message}`));
     }
   }
 

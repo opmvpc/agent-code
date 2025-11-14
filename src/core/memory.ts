@@ -5,9 +5,21 @@
  */
 
 export interface Message {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   timestamp?: Date;
+  // Tool-specific metadata (for role: "tool")
+  tool_name?: string;
+  tool_call_id?: string;
+  // Assistant tool calls (for role: "assistant" with actions)
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: {
+      name: string;
+      arguments: string; // JSON string
+    };
+  }>;
 }
 
 export interface ConversationContext {
@@ -34,14 +46,36 @@ export class AgentMemory {
    * Ajoute un message à l'historique
    * (avec trimming automatique parce que t'as pas une mémoire infinie gamin)
    */
-  addMessage(role: Message['role'], content: string): void {
+  addMessage(role: Message['role'], content: string, metadata?: Partial<Message>): void {
     this.context.messages.push({
       role,
       content,
       timestamp: new Date(),
+      ...metadata, // Allow additional fields (tool_name, tool_calls, etc.)
     });
 
     // Garde seulement les N derniers messages (sauf le system prompt)
+    const systemMessages = this.context.messages.filter(m => m.role === 'system');
+    const otherMessages = this.context.messages.filter(m => m.role !== 'system');
+
+    if (otherMessages.length > this.maxMessages) {
+      const keep = otherMessages.slice(-this.maxMessages);
+      this.context.messages = [...systemMessages, ...keep];
+    }
+  }
+
+  /**
+   * Ajoute un résultat de tool à l'historique (avec métadonnées)
+   */
+  addToolResult(toolName: string, result: string): void {
+    this.context.messages.push({
+      role: "tool",
+      content: result,
+      tool_name: toolName,
+      timestamp: new Date(),
+    });
+
+    // Apply same trimming logic
     const systemMessages = this.context.messages.filter(m => m.role === 'system');
     const otherMessages = this.context.messages.filter(m => m.role !== 'system');
 

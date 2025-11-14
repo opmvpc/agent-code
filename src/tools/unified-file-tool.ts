@@ -4,6 +4,7 @@
  */
 
 import { BaseTool, type ToolResult } from "./base-tool.js";
+import chalk from "chalk";
 import type { Agent } from "../core/agent.js";
 
 export class FileTool extends BaseTool {
@@ -23,12 +24,12 @@ export class FileTool extends BaseTool {
         filename: {
           type: "string",
           description:
-            "Filename (required for read, write, edit, delete actions). Must include extension (.js, .ts, .json, .txt, .html, .css, .md)",
+            "Filename (required for read, write, edit, delete actions). Must include extension (.js, .ts, .json, .txt, .html, .css, .md, .svg)",
         },
         instructions: {
           type: "string",
           description:
-            "Instructions for AI to generate (write) or modify (edit) the file content. Required for write and edit actions.",
+            "HIGH-LEVEL instructions for AI to generate (write) or modify (edit) the file content. NEVER put actual code here! Examples: 'Create a responsive navigation menu with dropdown', 'Draw a beautiful house with a red roof and chimney', 'Add error handling to the main function'. The AI will generate the actual code based on these instructions. Required for write and edit actions.",
         },
       },
       required: ["action"],
@@ -202,13 +203,28 @@ ${conversationContext}
 
 Generate the complete, working code for this file:`;
 
-      // Call LLM to generate code
+      // Call LLM to generate code with a FRESH client (no agentic loop system prompt!)
       const llmClient = agent.getLLMClient();
+
+      // Create a dedicated code generation system prompt
+      const codeGenSystemPrompt = `You are a code generator. Your ONLY job is to output raw code.
+
+CRITICAL RULES:
+- Output ONLY the code itself (HTML, CSS, JS, SVG, etc.)
+- NO JSON responses
+- NO markdown code blocks
+- NO explanations or comments outside the code
+- NO tool calls
+- Just pure, raw, working code
+
+Example request: "Create a button"
+Bad response: {"mode": "parallel", "actions": [...]}
+Good response: <button class="btn">Click me</button>`;
+
       const response = await llmClient.chat([
         {
           role: "system",
-          content:
-            "You are a code generator. Output ONLY code, no markdown, no explanations.",
+          content: codeGenSystemPrompt,
         },
         {
           role: "user",
@@ -216,12 +232,46 @@ Generate the complete, working code for this file:`;
         },
       ]);
 
-      const generatedCode = response.choices?.[0]?.message?.content || "";
+      let generatedCode = response.choices?.[0]?.message?.content || "";
 
-      if (!generatedCode) {
+      if (process.env.DEBUG === "true") {
+        console.log(
+          chalk.gray(
+            `\n[FileTool] Raw AI response (first 200 chars): ${generatedCode.substring(
+              0,
+              200
+            )}`
+          )
+        );
+      }
+
+      // Safety: If LLM still returned JSON (because of persistent system prompt), extract content
+      if (generatedCode.trim().startsWith("{")) {
+        try {
+          const jsonResponse = JSON.parse(generatedCode);
+          // Try to extract actual code from various JSON structures
+          if (jsonResponse.actions && Array.isArray(jsonResponse.actions)) {
+            const fileAction = jsonResponse.actions.find(
+              (a: any) => a.tool === "file"
+            );
+            if (fileAction?.args?.instructions) {
+              generatedCode = fileAction.args.instructions;
+              if (process.env.DEBUG === "true") {
+                console.log(
+                  chalk.yellow(`[FileTool] Extracted code from JSON response`)
+                );
+              }
+            }
+          }
+        } catch {
+          // Not JSON, continue with original content
+        }
+      }
+
+      if (!generatedCode || generatedCode.trim().length === 0) {
         return {
           success: false,
-          error: "AI failed to generate code",
+          error: "AI failed to generate code (empty response)",
         };
       }
 
@@ -230,6 +280,43 @@ Generate the complete, working code for this file:`;
       const codeBlockMatch = cleanCode.match(/```(?:\w+)?\s*\n([\s\S]*?)\n```/);
       if (codeBlockMatch) {
         cleanCode = codeBlockMatch[1];
+        if (process.env.DEBUG === "true") {
+          console.log(chalk.gray(`[FileTool] Cleaned markdown code blocks`));
+        }
+      }
+
+      // CRITICAL: Validate that we have actual CODE, not instructions!
+      // Instructions are typically plain English sentences, code has symbols
+      const hasCodeSymbols = /[<>{}\[\];()=]/.test(cleanCode);
+      const looksLikeInstructions =
+        cleanCode.length < 200 &&
+        !hasCodeSymbols &&
+        /^[A-Z].*[a-z]{10,}/.test(cleanCode);
+
+      if (looksLikeInstructions) {
+        if (process.env.DEBUG === "true") {
+          console.log(
+            chalk.red(
+              `[FileTool] WARNING: Generated content looks like instructions, not code!`
+            )
+          );
+          console.log(chalk.red(`[FileTool] Content: ${cleanCode}`));
+        }
+        return {
+          success: false,
+          error: `AI generated instructions instead of code. Content: "${cleanCode.substring(
+            0,
+            100
+          )}"`,
+        };
+      }
+
+      if (process.env.DEBUG === "true") {
+        console.log(
+          chalk.gray(
+            `[FileTool] Writing ${cleanCode.length} bytes to ${filename}`
+          )
+        );
       }
 
       // Write the generated code

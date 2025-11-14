@@ -23,8 +23,8 @@ export const AgentResponseSchema = z.object({
   mode: z.enum(["parallel", "sequential"]).describe(
     "Execution mode: 'parallel' for independent actions, 'sequential' for dependent steps"
   ),
-  actions: z.array(ToolCallSchema).min(1).describe(
-    "List of tool calls to execute. Must contain at least one action."
+  actions: z.array(ToolCallSchema).describe(
+    "List of tool calls to execute. Can be empty to stop the loop!"
   ),
   reasoning: z.string().optional().describe(
     "Optional: Your reasoning for these actions (only if reasoning is enabled)"

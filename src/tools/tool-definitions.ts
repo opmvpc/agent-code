@@ -94,17 +94,6 @@ export function generateExamples(): string {
 # 📚 EXAMPLES
 
 ## Example 1: Simple greeting (send message + stop)
-\`\`\`json
-{
-  "mode": "sequential",
-  "actions": [
-    { "tool": "send_message", "args": {} },
-    { "tool": "stop", "args": {} }
-  ]
-}
-\`\`\`
-
-## Example 2: Simple greeting (send message + empty actions next turn)
 **Turn 1:**
 \`\`\`json
 {
@@ -114,11 +103,39 @@ export function generateExamples(): string {
   ]
 }
 \`\`\`
-**Turn 2 (stop with empty array):**
+**Turn 2 (MUST stop to return control!):**
 \`\`\`json
 {
   "mode": "sequential",
   "actions": []
+}
+\`\`\`
+
+## Example 2: Asking user a question
+**Turn 1 (ask question):**
+\`\`\`json
+{
+  "mode": "sequential",
+  "actions": [
+    { "tool": "send_message", "args": {} }  // Message will ask: "What features do you want?"
+  ]
+}
+\`\`\`
+**Turn 2 (STOP - user needs to respond!):**
+\`\`\`json
+{
+  "mode": "sequential",
+  "actions": []  // ← CRITICAL! User can't type while loop runs!
+}
+\`\`\`
+**Turn 3 (after user responds, continue work):**
+\`\`\`json
+{
+  "mode": "parallel",
+  "actions": [
+    { "tool": "file", "args": { "action": "write", "filename": "app.js", "instructions": "..." } },
+    { "tool": "send_message", "args": {} }
+  ]
 }
 \`\`\`
 

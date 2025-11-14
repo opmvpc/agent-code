@@ -298,6 +298,10 @@ export class Agent {
 
         const agentResponse = parseResult.data;
 
+        // CRITICAL: Add agent's JSON response to memory as assistant message
+        // This preserves what tools the agent decided to call
+        this.memory.addMessage("assistant", responseText);
+
         // Log parsed response
         logger.info("Agent response parsed", {
           mode: agentResponse.mode,
@@ -442,11 +446,32 @@ export class Agent {
                 Display.error(`    ✗ ${result.error}`);
               }
 
-              // Add result to messages for next action
-              messages.push({
-                role: "user",
-                content: `${action.tool} result: ${JSON.stringify(result)}`,
-              });
+              // CRITICAL: Add result to messages for next action
+              // Different handling based on tool type
+              if (
+                action.tool === "send_message" &&
+                result.success &&
+                result.message
+              ) {
+                // send_message: Add as assistant message + save to memory
+                const assistantMessage = result.message;
+                messages.push({
+                  role: "assistant",
+                  content: assistantMessage,
+                });
+                this.memory.addMessage("assistant", assistantMessage);
+              } else {
+                // Other tools: Add as tool result + save to memory
+                const toolResult = JSON.stringify(result);
+                messages.push({
+                  role: "tool",
+                  tool_name: action.tool,
+                  content: toolResult,
+                });
+
+                // Save tool result to memory with proper metadata
+                this.memory.addToolResult(action.tool, toolResult);
+              }
             } catch (error) {
               Display.error(`    ✗ ${(error as Error).message}`);
               messages.push({
@@ -853,12 +878,15 @@ export class Agent {
     }
 
     try {
+      const messages = this.memory.getMessages();
+
       // Save conversation data (messages + todos)
+      // Messages now include tool results with proper metadata!
       this.projectManager.saveConversation(
         this.projectName,
         this.conversationId,
         {
-          messages: this.memory.getMessages(),
+          messages, // Includes role: "tool" messages
           todos: this.todoManager.listTodos(),
           // vfs removed - saved separately at project level
         }
@@ -870,10 +898,38 @@ export class Agent {
         this.getVFSSnapshot()
       );
 
+      // Log full message history for debugging
       logger.info("Conversation saved", {
         project: this.projectName,
         conversation: this.conversationId,
+        messageCount: messages.length,
       });
+
+      // Log detailed message structure
+      logger.info("Message history", {
+        messages: messages.map((m) => ({
+          role: m.role,
+          contentLength: m.content?.length || 0,
+          contentPreview: m.content?.substring(0, 100),
+          tool_name: m.tool_name,
+          tool_call_id: m.tool_call_id,
+          hasToolCalls: !!m.tool_calls,
+          toolCallsCount: m.tool_calls?.length || 0,
+        })),
+      });
+
+      // In debug mode, also show in console
+      if (process.env.DEBUG === "true") {
+        console.log(chalk.gray("\n[Debug] Message History:"));
+        messages.forEach((m, i) => {
+          const preview = m.content?.substring(0, 80).replace(/\n/g, " ") || "";
+          const toolInfo = m.tool_name ? ` (tool: ${m.tool_name})` : "";
+          console.log(
+            chalk.dim(`  ${i + 1}. [${m.role}]${toolInfo}: ${preview}...`)
+          );
+        });
+        console.log();
+      }
     } catch (error) {
       logger.error("Failed to save conversation", {
         error: (error as Error).message,

@@ -130,8 +130,12 @@ async function startChat(
 
   // Set up title generation callback
   chat.setOnTitleGenerated((title: string) => {
-    projectManager.updateConversationTitle(projectName, conversationId, title);
-    console.log(chalk.gray(`\n✨ Conversation title updated: "${title}"\n`));
+    try {
+      projectManager.updateConversationTitle(projectName, conversationId, title);
+      console.log(chalk.green(`\n✨ Conversation renamed: "${title}"\n`));
+    } catch (error) {
+      console.error(chalk.red(`\n❌ Failed to update conversation title: ${(error as Error).message}\n`));
+    }
   });
 
   // Display project/conversation info
