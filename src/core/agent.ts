@@ -337,26 +337,29 @@ export class Agent {
         // Execute actions based on mode
         console.log(chalk.cyan(`\n🔧 Actions (${agentResponse.mode}):`));
 
-        let shouldStop = false;
+        // Detect stop action anywhere in the list
         const hasStopAction = agentResponse.actions.some(
           (a) => a.tool === "stop"
         );
 
-        // Check for stop - if present, it's validated to be alone or last
+        // Filter out stop from actions to execute (stop is just a signal, not a real tool)
+        const actionsToExecute = agentResponse.actions.filter(
+          (a) => a.tool !== "stop"
+        );
+
         if (hasStopAction) {
-          // If stop is alone, we break immediately
-          if (agentResponse.actions.length === 1) {
-            console.log(chalk.green("\n  ✓ Stop requested - finishing"));
-            break;
-          }
-          // If stop is not alone, it must be last - we'll hit it during sequential execution
+          console.log(
+            chalk.yellow(
+              "\n  🛑 Stop signal detected - will end after this iteration"
+            )
+          );
         }
 
         // Execute based on mode
         if (agentResponse.mode === "parallel") {
-          // Execute all actions in parallel with Promise.all
+          // Execute all actions in parallel with Promise.all (excluding stop)
           const results = await Promise.all(
-            agentResponse.actions.map(async (action) => {
+            actionsToExecute.map(async (action) => {
               console.log(chalk.cyan(`  ➤ ${action.tool}`));
               if (process.env.DEBUG === "true") {
                 console.log(
@@ -411,15 +414,8 @@ export class Agent {
             content: `Results: ${resultsText}`,
           });
         } else {
-          // Sequential execution - one by one
-          for (const action of agentResponse.actions) {
-            // If we hit stop, we break the loop and finish
-            if (action.tool === "stop") {
-              console.log(chalk.green("\n  ✓ Stop requested - finishing"));
-              shouldStop = true;
-              break;
-            }
-
+          // Sequential execution - one by one (excluding stop)
+          for (const action of actionsToExecute) {
             console.log(chalk.cyan(`  ➤ ${action.tool}`));
             if (process.env.DEBUG === "true") {
               console.log(
@@ -477,11 +473,12 @@ export class Agent {
               });
             }
           }
+        }
 
-          // If we stopped mid-execution, break the main loop
-          if (shouldStop) {
-            break;
-          }
+        // If stop was requested, break the main loop after completing all actions
+        if (hasStopAction) {
+          console.log(chalk.green("\n✅ Stopping agent loop"));
+          break;
         }
 
         // Continue to next iteration
@@ -541,7 +538,13 @@ export class Agent {
       return `❌ ${toolName} failed: ${result.error}`;
     }
 
-    // Create concise summaries based on tool type
+    // PRIORITY: If tool provides a formatted message, use it!
+    // Tools like file (read/write/edit) and websearch include full content in message
+    if (result.message) {
+      return result.message;
+    }
+
+    // Fallback summaries for tools that don't provide formatted messages
     switch (toolName) {
       case "file":
         if (result.action === "write") {
@@ -553,7 +556,6 @@ export class Agent {
         } else if (result.action === "delete") {
           return `✅ File deleted: ${result.filename}`;
         } else if (result.action === "list") {
-          // Show full tree structure for AI to see all files!
           return `✅ Listed ${result.count} file(s):\n\n${
             result.tree || "No files in workspace"
           }`;
@@ -582,23 +584,19 @@ export class Agent {
         }
         return `✅ Code executed successfully (no output)`;
 
-      case "send_message":
-        // Store the ACTUAL message sent to user (not just "message sent")
-        if (result.success && result.message) {
-          return result.message; // The actual message content!
-        }
-        return `✅ Message sent to user`;
-
       case "stop":
         return `✅ Agent stopped`;
 
+      case "websearch":
+        // Websearch should always provide formatted message, but just in case
+        return `✅ Web search completed for: ${result.query}`;
+
       default:
-        // Fallback: use message if available, or generic success
-        return result.message || `✅ ${toolName} completed successfully`;
+        return `✅ ${toolName} completed successfully`;
     }
 
-    // Fallback
-    return result.message || `✅ ${toolName} completed`;
+    // Final fallback
+    return `✅ ${toolName} completed`;
   }
 
   /**

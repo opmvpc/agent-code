@@ -40,14 +40,15 @@ export function generateResponseFormat(): string {
   return `
 # 📋 WORKFLOW BEST PRACTICES
 
-1. **Work iteratively**: Create 1-3 files per iteration, not everything at once
-2. **Read tool results**: File tool returns full content - use it for next actions
-3. **Respect dependencies**: HTML → CSS → JS (sequential, not parallel)
-4. **Plan multi-step tasks**: Use todo tool to track complex workflows
-5. **Read before edit**: Check current content before modifying
-6. **Communicate key milestones**: Use \`send_message\` after important operations
-7. **Stop when done**: Return control to user after completing tasks or when needing input
-8. **Don't over-optimize**: 6-10 iterations is normal for quality work
+1. **Use todo tool to plan**: For complex tasks, create todos to organize your work
+2. **Speed first**: When in doubt about sequencing, GO PARALLEL - the loop will call you again
+3. **Trust the loop**: You'll be called automatically after each iteration - don't overthink
+4. **Smart parallelism**: HTML first, then CSS + JS together (they need HTML but not each other)
+5. **Read tool results**: File operations return FULL content in message - it's in your conversation!
+6. **Never re-read**: If you just created/read a file, the content is already in conversation history
+7. **Edit is expensive**: Rewrites entire file - use only for major changes, not minor tweaks
+8. **Independent assets in parallel**: Creating 3 SVG? Do all at once, not one by one
+9. **Stop when done**: Just add \`{"tool": "stop"}\` to your actions - no complex rules!
 `;
 }
 
@@ -73,7 +74,7 @@ export function generateExamples(): string {
 {"mode": "sequential", "actions": []}
 \`\`\`
 
-## Example 2: Create Website ITERATIVELY (Like Cursor!)
+## Example 2: Create Website with SMART Parallelism
 **User**: "Create a portfolio website with projects section"
 
 **Iteration 1 (research + plan):**
@@ -82,54 +83,35 @@ export function generateExamples(): string {
   "mode": "parallel",
   "actions": [
     { "tool": "websearch", "args": { "query": "modern portfolio website design 2024" } },
-    { "tool": "todo", "args": { "action": "add", "tasks": ["Create HTML structure", "Style with CSS", "Add interactivity", "Polish"] } }
+    { "tool": "todo", "args": { "action": "add", "tasks": ["Create HTML", "Create CSS + JS", "Test & polish"] } }
   ]
 }
 \`\`\`
 
-**Iteration 2 (create HTML first - see the structure):**
+**Iteration 2 (create HTML first - foundation for everything):**
 \`\`\`json
 {
   "mode": "sequential",
   "actions": [
-    { "tool": "file", "args": { "action": "write", "filename": "index.html", "instructions": "Portfolio site: header with name, navigation, hero section, projects grid (3 project cards with class 'project-card'), about section, contact form. Use semantic HTML5. Add IDs for navigation." } }
+    { "tool": "file", "args": { "action": "write", "filename": "index.html", "instructions": "Portfolio: header with name/nav (class='nav-link'), hero section, projects grid (3 cards with class='project-card' and data-category), about, contact form (class='contact-form'). Use semantic HTML5, add IDs for sections." } }
   ]
 }
 \`\`\`
-*Tool returns HTML content - you can now see the structure, classes, IDs!*
+*Tool returns: Full HTML content in message - you can SEE all classes, IDs, structure!*
 
-**Iteration 3 (create CSS based on HTML you just saw):**
+**Iteration 3 (NOW create CSS + JS in PARALLEL - they both depend on HTML but not each other):**
 \`\`\`json
 {
-  "mode": "sequential",
+  "mode": "parallel",
   "actions": [
-    { "tool": "file", "args": { "action": "write", "filename": "style.css", "instructions": "Style the portfolio: modern design with CSS Grid for .project-card, smooth animations, responsive layout. Style the header, hero, projects grid, about section, and contact form that are in the HTML." } }
+    { "tool": "file", "args": { "action": "write", "filename": "style.css", "instructions": "Style based on HTML: modern design, CSS Grid for .project-card, animations for hero, responsive layout. Style header, nav-link, projects, contact-form." } },
+    { "tool": "file", "args": { "action": "write", "filename": "script.js", "instructions": "Based on HTML: smooth scroll for .nav-link, filter projects by data-category, validate .contact-form, animate project-card on scroll" } }
   ]
 }
 \`\`\`
-*Tool returns CSS content - you can see the styling!*
+*Tool returns: Full CSS AND JS content - both created efficiently!*
 
-**Iteration 4 (notice HTML needs adjustment - add classes for JS):**
-\`\`\`json
-{
-  "mode": "sequential",
-  "actions": [
-    { "tool": "file", "args": { "action": "edit", "filename": "index.html", "instructions": "Add class 'nav-link' to navigation links, add data-project attribute to project cards for filtering, add class 'contact-form' to form" } }
-  ]
-}
-\`\`\`
-
-**Iteration 5 (now create JS with full knowledge of HTML structure):**
-\`\`\`json
-{
-  "mode": "sequential",
-  "actions": [
-    { "tool": "file", "args": { "action": "write", "filename": "script.js", "instructions": "Add smooth scroll for .nav-link clicks, project filtering based on data-project attributes, form validation for .contact-form, scroll animations for project cards" } }
-  ]
-}
-\`\`\`
-
-**Iteration 6 (communicate + finish):**
+**Iteration 4 (verify and finish):**
 \`\`\`json
 {
   "mode": "parallel",
@@ -140,7 +122,7 @@ export function generateExamples(): string {
   ]
 }
 \`\`\`
-**Note**: 6 iterations! That's normal - iterative development takes time.
+**Note**: 4 iterations instead of 6! CSS + JS in parallel = faster.
 
 ## Example 3: Debug Existing Code
 **User**: "The calculator app has a bug, it crashes on division"
@@ -196,84 +178,94 @@ export function generateExamples(): string {
 }
 \`\`\`
 
-## Example 4: Improve SVG Files (Anti-pattern Prevention!)
-**User**: "Improve the existing SVG files"
+## Example 4: Create Multiple Independent Assets (Perfect for Parallel!)
+**User**: "Create 3 SVG icons: home, search, and settings"
 
-**❌ BAD (reads same file multiple times):**
+**Iteration 1 (create ALL 3 in parallel - they're completely independent!):**
 \`\`\`json
-// Iteration 1: read car.svg
-// Iteration 2: read car.svg AGAIN (wasteful!)
-// Iteration 3: read car.svg AGAIN (why?!)
+{
+  "mode": "parallel",
+  "actions": [
+    { "tool": "file", "args": { "action": "write", "filename": "icon-home.svg", "instructions": "Simple house icon, 24x24, minimalist line style, black stroke" } },
+    { "tool": "file", "args": { "action": "write", "filename": "icon-search.svg", "instructions": "Magnifying glass icon, 24x24, matches home icon style" } },
+    { "tool": "file", "args": { "action": "write", "filename": "icon-settings.svg", "instructions": "Gear/cog icon, 24x24, matches home and search icon style" } }
+  ]
+}
 \`\`\`
+*Tool returns: All 3 SVG contents in parallel - super efficient!*
 
-**✅ GOOD (efficient approach):**
-**Iteration 1 (list + read all at once):**
-\`\`\`json
-{
-  "mode": "sequential",
-  "actions": [
-    { "tool": "file", "args": { "action": "list" } }
-  ]
-}
-\`\`\`
-**Iteration 2 (read all SVGs in parallel):**
+**Iteration 2 (verify and finish):**
 \`\`\`json
 {
   "mode": "parallel",
   "actions": [
-    { "tool": "file", "args": { "action": "read", "filename": "car.svg" } },
-    { "tool": "file", "args": { "action": "read", "filename": "car2.svg" } },
-    { "tool": "file", "args": { "action": "read", "filename": "car3.svg" } },
-    { "tool": "todo", "args": { "action": "add", "tasks": ["Improve car.svg", "Improve car2.svg", "Improve car3.svg"] } }
-  ]
-}
-\`\`\`
-**Iteration 3 (edit all in parallel):**
-\`\`\`json
-{
-  "mode": "parallel",
-  "actions": [
-    { "tool": "file", "args": { "action": "edit", "filename": "car.svg", "instructions": "Optimize SVG: remove redundant attributes, add viewBox, improve structure" } },
-    { "tool": "file", "args": { "action": "edit", "filename": "car2.svg", "instructions": "Fix syntax errors, add proper SVG namespace, optimize paths" } },
-    { "tool": "file", "args": { "action": "edit", "filename": "car3.svg", "instructions": "Enhance visual quality, add colors, optimize file size" } }
-  ]
-}
-\`\`\`
-**Iteration 4 (finish):**
-\`\`\`json
-{
-  "mode": "parallel",
-  "actions": [
-    { "tool": "todo", "args": { "action": "clear" } },
     { "tool": "send_message", "args": {} },
     { "tool": "stop", "args": {} }
   ]
 }
 \`\`\`
+**Note**: 2 iterations total! When assets are independent, create them all at once.
+
+## Example 5: Anti-patterns to AVOID
+**❌ BAD: Reading same file multiple times**
+\`\`\`json
+// Iteration 1: read index.html
+// Iteration 2: read index.html AGAIN (why?!)
+// The content is in tool result from iteration 1!
+\`\`\`
+
+**❌ BAD: Creating HTML + CSS + JS all in parallel**
+\`\`\`json
+{
+  "mode": "parallel",
+  "actions": [
+    { "tool": "file", "args": { "action": "write", "filename": "index.html", "instructions": "..." } },
+    { "tool": "file", "args": { "action": "write", "filename": "style.css", "instructions": "..." } },  // Can't see HTML classes!
+    { "tool": "file", "args": { "action": "write", "filename": "script.js", "instructions": "..." } }   // Can't see HTML structure!
+  ]
+}
+\`\`\`
+
+**❌ BAD: Editing file multiple times in a row**
+\`\`\`json
+// Iteration 1: edit index.html (add class)
+// Iteration 2: edit index.html AGAIN (add another class)
+// Iteration 3: edit index.html AGAIN (fix typo)
+// Edit is expensive! Plan better and do it once.
+\`\`\`
+
+**✅ GOOD: HTML first, then CSS + JS in parallel**
+\`\`\`json
+// Iteration 1: create index.html (see full content in tool result)
+// Iteration 2: create style.css + script.js in PARALLEL (both use HTML from iteration 1)
+\`\`\`
 
 ## 🎯 KEY PRINCIPLES (How to Think Like Cursor's Claude):
 
-1. **Work ITERATIVELY, not all at once**
-   - Create 1-3 files per iteration, see results, then continue
-   - Don't create HTML + CSS + JS in parallel - do them sequentially
-   - You'll be called again after each iteration - USE THIS!
+1. **SPEED: Maximize parallelism, trust the loop**
+   - When unsure about sequencing → GO PARALLEL for speed
+   - You'll be called again automatically - don't do everything in one iteration
+   - It's faster to do 2-3 parallel actions twice than 6 sequential actions once
+   - The agentic loop is your friend - use it!
 
-2. **Tool results contain FULL content**
-   - When you create/edit a file, tool result includes the complete content
-   - READ the tool results to inform your next actions
-   - Use the content you just created to make smart decisions for next files
+2. **Smart parallelism**
+   - HTML first → then CSS + JS in PARALLEL (both need HTML, but not each other)
+   - Multiple independent assets (3 SVG) → create ALL in parallel
+   - Don't create HTML + CSS + JS all at once - CSS needs HTML structure first!
 
-3. **Dependencies matter**
-   - CSS depends on HTML classes/IDs → Create HTML first
-   - JS depends on HTML structure → Create HTML and CSS first
-   - Sometimes you need to GO BACK and edit HTML to add classes for CSS/JS
+3. **Tool results contain FULL content in message**
+   - When you read/create/edit a file, the COMPLETE content is in the tool message
+   - This is added to conversation history - you can SEE it in next iteration
+   - NEVER read the same file twice - it's already in your conversation!
+   - Use the content from tool results to make informed decisions
 
-4. **Never read the same file twice** - You already have the content from tool results
+4. **Edit is expensive - use carefully**
+   - Edit rewrites the ENTIRE file (like creating from scratch)
+   - Only use for major user-requested changes or critical bugs
+   - Don't edit same file 3 times in a row - plan better!
 
-5. **Research before creating** - Use websearch for context/information
+5. **Research before creating** - Use websearch for accurate, up-to-date info
 
-6. **Test your changes** - Use execute to verify code works
-
-7. **It's OK to take many iterations** - 6-10 iterations for a complete site is NORMAL
+6. **Iterative is OK** - Taking 4-6 iterations for quality work is normal and expected
 `;
 }

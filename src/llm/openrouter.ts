@@ -42,7 +42,8 @@ export interface OpenRouterConfig {
   tools?: any[]; // Tool definitions for native tool calling
   responseFormat?: {
     type: "json_schema";
-    jsonSchema: {  // camelCase pour le SDK officiel!
+    jsonSchema: {
+      // camelCase pour le SDK officiel!
       name: string;
       description?: string;
       schema?: any;
@@ -231,6 +232,7 @@ export class OpenRouterClient {
 
       const pluginConfig: any = {
         id: "web",
+        engine: "exa", // Always use Exa search engine ($4 per 1000 results)
         max_results: normalizedMaxResults,
       };
 
