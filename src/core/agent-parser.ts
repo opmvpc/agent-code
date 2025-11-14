@@ -86,6 +86,15 @@ export async function parseWithRetry(
           length: currentResponse.length,
         });
 
+        // CRITICAL: Log empty/broken responses
+        if (!currentResponse || currentResponse.length < 10) {
+          logger.error("Empty or suspicious retry response", {
+            attempt,
+            responseText: currentResponse || "(empty)",
+            fullRetryResponse: JSON.stringify(retryResponse, null, 2),
+          });
+        }
+
         // Add assistant's retry to history
         messages.push({
           role: "assistant",

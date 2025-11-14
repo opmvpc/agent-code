@@ -7,6 +7,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import chalk from "chalk";
+import logger from "../utils/logger.js";
 
 export interface ReasoningOptions {
   enabled?: boolean;
@@ -120,6 +121,28 @@ export class OpenRouterClient {
 
       const response = await this.client.chat.completions.create(requestBody);
 
+      // CRITICAL: Detect and log empty/broken responses
+      if (!response.choices || response.choices.length === 0) {
+        logger.error("API returned no choices!", {
+          fullResponse: JSON.stringify(response, null, 2),
+        });
+        throw new Error("API returned empty choices array");
+      }
+
+      const messageContent = response.choices[0]?.message?.content;
+      if (
+        messageContent === null ||
+        messageContent === undefined ||
+        messageContent === ""
+      ) {
+        logger.error("API returned empty content!", {
+          choice: JSON.stringify(response.choices[0], null, 2),
+          messageContent: messageContent,
+          contentType: typeof messageContent,
+          fullResponse: JSON.stringify(response, null, 2),
+        });
+      }
+
       // Parse usage info from OpenRouter (the good stuff 📊)
       this.updateUsageStats(response.usage);
 
@@ -172,10 +195,7 @@ export class OpenRouterClient {
    * Run a web search request using the OpenRouter web plugin
    * Returns the raw assistant response so the caller can inject it in the loop
    */
-  async webSearch(
-    query: string,
-    options: WebSearchOptions = {}
-  ): Promise<any> {
+  async webSearch(query: string, options: WebSearchOptions = {}): Promise<any> {
     if (!query?.trim()) {
       throw new Error("query is required for web search");
     }
@@ -186,17 +206,12 @@ export class OpenRouterClient {
       this.requestCount++;
 
       const requestedMax = Number.isFinite(
-        typeof options.maxResults === "number"
-          ? options.maxResults
-          : Number.NaN
+        typeof options.maxResults === "number" ? options.maxResults : Number.NaN
       )
         ? Math.floor(options.maxResults as number)
         : 5;
 
-      const normalizedMaxResults = Math.min(
-        Math.max(requestedMax || 5, 1),
-        10
-      );
+      const normalizedMaxResults = Math.min(Math.max(requestedMax || 5, 1), 10);
 
       const pluginConfig: any = {
         id: "web",

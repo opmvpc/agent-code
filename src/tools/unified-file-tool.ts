@@ -1,11 +1,20 @@
 // src/tools/unified-file-tool.ts
 /**
  * Tool unifié pour la gestion CRUD des fichiers
+ * AVEC génération de code validée par Zod + retry!
  */
 
 import { BaseTool, type ToolResult } from "./base-tool.js";
 import chalk from "chalk";
 import type { Agent } from "../core/agent.js";
+import {
+  parseCodeGeneration,
+  type CodeGeneration,
+} from "../llm/code-generation-schema.js";
+import {
+  getCodeGenerationPrompt,
+  getCodeEditPrompt,
+} from "../llm/code-generation-prompt.js";
 
 export class FileTool extends BaseTool {
   readonly name = "file";
@@ -103,8 +112,6 @@ export class FileTool extends BaseTool {
     }
   }
 
-  // handleWrite method removed - all writes now use AI generation via handleAIWrite
-
   /**
    * Handle listing all files
    */
@@ -159,7 +166,7 @@ export class FileTool extends BaseTool {
   }
 
   /**
-   * Handle AI-generated file creation
+   * Handle AI-generated file creation (with Zod validation + retry!)
    */
   private async handleAIWrite(
     filename: string,
@@ -192,161 +199,119 @@ export class FileTool extends BaseTool {
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n");
 
-      // Build prompt for code generation
-      const codeGenPrompt = `You are a code generation assistant. Generate ONLY the code, no explanations, no markdown.
+      // Build prompt for code generation using the NEW dedicated prompt!
+      const userPrompt = getCodeGenerationPrompt(
+        filename,
+        instructions,
+        conversationContext
+      );
 
-File: ${filename}
-Instructions: ${instructions}
-
-Recent conversation context:
-${conversationContext}
-
-Generate the complete, working code for this file:`;
-
-      // Call LLM to generate code with a FRESH client (no agentic loop system prompt!)
+      // Call LLM with retry mechanism (like in agent-parser.ts!)
       const llmClient = agent.getLLMClient();
+      const maxRetries = 5;
+      let lastError = "";
 
-      // Create a dedicated code generation system prompt
-      const codeGenSystemPrompt = `You are a code generator. Your ONLY job is to output raw code.
-
-CRITICAL RULES:
-- Output ONLY the code itself (HTML, CSS, JS, SVG, etc.)
-- NO JSON responses
-- NO markdown code blocks
-- NO explanations or comments outside the code
-- NO tool calls
-- Just pure, raw, working code
-
-Example request: "Create a button"
-Bad response: {"mode": "parallel", "actions": [...]}
-Good response: <button class="btn">Click me</button>`;
-
-      const response = await llmClient.chat([
-        {
-          role: "system",
-          content: codeGenSystemPrompt,
-        },
-        {
-          role: "user",
-          content: codeGenPrompt,
-        },
-      ]);
-
-      let generatedCode = response.choices?.[0]?.message?.content || "";
-
-      if (process.env.DEBUG === "true") {
-        console.log(
-          chalk.gray(
-            `\n[FileTool] Raw AI response (first 200 chars): ${generatedCode.substring(
-              0,
-              200
-            )}`
-          )
-        );
-      }
-
-      // Safety: If LLM still returned JSON (because of persistent system prompt), extract content
-      if (generatedCode.trim().startsWith("{")) {
-        try {
-          const jsonResponse = JSON.parse(generatedCode);
-          // Try to extract actual code from various JSON structures
-          if (jsonResponse.actions && Array.isArray(jsonResponse.actions)) {
-            const fileAction = jsonResponse.actions.find(
-              (a: any) => a.tool === "file"
-            );
-            if (fileAction?.args?.instructions) {
-              generatedCode = fileAction.args.instructions;
-              if (process.env.DEBUG === "true") {
-                console.log(
-                  chalk.yellow(`[FileTool] Extracted code from JSON response`)
-                );
-              }
-            }
-          }
-        } catch {
-          // Not JSON, continue with original content
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (attempt > 1) {
+          console.log(
+            chalk.yellow(`\n[FileTool] Retry ${attempt}/${maxRetries}...`)
+          );
         }
-      }
 
-      if (!generatedCode || generatedCode.trim().length === 0) {
-        return {
-          success: false,
-          error: "AI failed to generate code (empty response)",
-        };
-      }
+        // Add Zod error feedback to the prompt on retry
+        const retryPrompt =
+          attempt > 1
+            ? `${userPrompt}\n\n⚠️ PREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease fix the error and respond with valid JSON.`
+            : userPrompt;
 
-      // Clean up potential markdown code blocks
-      let cleanCode = generatedCode.trim();
-      const codeBlockMatch = cleanCode.match(/```(?:\w+)?\s*\n([\s\S]*?)\n```/);
-      if (codeBlockMatch) {
-        cleanCode = codeBlockMatch[1];
-        if (process.env.DEBUG === "true") {
-          console.log(chalk.gray(`[FileTool] Cleaned markdown code blocks`));
-        }
-      }
+        const response = await llmClient.chat([
+          {
+            role: "user",
+            content: retryPrompt,
+          },
+        ]);
 
-      // CRITICAL: Validate that we have actual CODE, not instructions!
-      // Instructions are typically plain English sentences, code has symbols
-      const hasCodeSymbols = /[<>{}\[\];()=]/.test(cleanCode);
-      const looksLikeInstructions =
-        cleanCode.length < 200 &&
-        !hasCodeSymbols &&
-        /^[A-Z].*[a-z]{10,}/.test(cleanCode);
+        const rawResponse = response.choices?.[0]?.message?.content || "";
 
-      if (looksLikeInstructions) {
         if (process.env.DEBUG === "true") {
           console.log(
-            chalk.red(
-              `[FileTool] WARNING: Generated content looks like instructions, not code!`
+            chalk.gray(
+              `\n[FileTool] Raw AI response (first 200 chars): ${rawResponse.substring(
+                0,
+                200
+              )}`
             )
           );
-          console.log(chalk.red(`[FileTool] Content: ${cleanCode}`));
         }
-        return {
-          success: false,
-          error: `AI generated instructions instead of code. Content: "${cleanCode.substring(
-            0,
-            100
-          )}"`,
-        };
+
+        // Parse with Zod validation
+        const parseResult = parseCodeGeneration(rawResponse);
+
+        if (parseResult.success) {
+          // SUCCESS! Write the file
+          const { filename: generatedFilename, content } = parseResult.data;
+
+          if (process.env.DEBUG === "true") {
+            console.log(
+              chalk.gray(
+                `[FileTool] Writing ${content.length} bytes to ${generatedFilename}`
+              )
+            );
+          }
+
+          agent.getVFS().writeFile(generatedFilename, content);
+          agent.getMemory().addFileCreated(generatedFilename);
+
+          const lines = content.split("\n").length;
+          const size = new Blob([content]).size;
+
+          console.log(`✓ Code generated (${lines} lines)`);
+
+          return {
+            success: true,
+            action: "write",
+            filename: generatedFilename,
+            size,
+            lines,
+            generated: true,
+            content, // Include full content for agent's memory!
+            preview: content.substring(0, 200) + "...",
+          };
+        } else {
+          // FAILED - prepare retry
+          lastError = parseResult.zodErrors
+            ? `Validation errors:\n${parseResult.zodErrors}`
+            : parseResult.error;
+
+          if (process.env.DEBUG === "true") {
+            console.log(chalk.red(`[FileTool] Parse error: ${lastError}`));
+          }
+
+          if (attempt === maxRetries) {
+            // Final attempt failed
+            return {
+              success: false,
+              error: `Failed to generate valid code after ${maxRetries} attempts. Last error: ${lastError}`,
+            };
+          }
+        }
       }
 
-      if (process.env.DEBUG === "true") {
-        console.log(
-          chalk.gray(
-            `[FileTool] Writing ${cleanCode.length} bytes to ${filename}`
-          )
-        );
-      }
-
-      // Write the generated code
-      agent.getVFS().writeFile(filename, cleanCode);
-      agent.getMemory().addFileCreated(filename);
-
-      const lines = cleanCode.split("\n").length;
-      const size = new Blob([cleanCode]).size;
-
-      console.log(`✓ Code generated (${lines} lines)`);
-
+      // Should never reach here
       return {
-        success: true,
-        action: "write",
-        filename,
-        size,
-        lines,
-        generated: true,
-        preview: cleanCode.substring(0, 200) + "...",
+        success: false,
+        error: "Code generation failed (unexpected end of retry loop)",
       };
     } catch (error) {
       return {
         success: false,
-        error: (error as Error).message,
+        error: `Failed to write file ${filename}: ${(error as Error).message}`,
       };
     }
   }
 
   /**
-   * Handle AI-powered file editing
+   * Handle AI-powered file editing (TODO: apply same Zod + retry logic!)
    */
   private async handleAIEdit(
     filename: string,
@@ -381,69 +346,84 @@ Good response: <button class="btn">Click me</button>`;
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n");
 
-      // Build prompt for code editing
-      const codeEditPrompt = `You are a code editing assistant. Modify the existing code according to instructions.
-Output ONLY the complete modified code, no explanations, no markdown.
+      // Build prompt for code editing using dedicated prompt
+      const userPrompt = getCodeEditPrompt(
+        filename,
+        currentContent,
+        instructions,
+        conversationContext
+      );
 
-File: ${filename}
-Instructions: ${instructions}
-
-Current code:
-\`\`\`
-${currentContent}
-\`\`\`
-
-Recent conversation context:
-${conversationContext}
-
-Generate the COMPLETE modified code:`;
-
-      // Call LLM to edit code
+      // Call LLM with retry (same as write!)
       const llmClient = agent.getLLMClient();
-      const response = await llmClient.chat([
-        {
-          role: "system",
-          content:
-            "You are a code editor. Output ONLY the complete modified code, no markdown, no explanations.",
-        },
-        {
-          role: "user",
-          content: codeEditPrompt,
-        },
-      ]);
+      const maxRetries = 5;
+      let lastError = "";
 
-      const modifiedCode = response.choices?.[0]?.message?.content || "";
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (attempt > 1) {
+          console.log(
+            chalk.yellow(`\n[FileTool] Retry ${attempt}/${maxRetries}...`)
+          );
+        }
 
-      if (!modifiedCode) {
-        return {
-          success: false,
-          error: "AI failed to edit code",
-        };
+        const retryPrompt =
+          attempt > 1
+            ? `${userPrompt}\n\n⚠️ PREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease fix the error and respond with valid JSON.`
+            : userPrompt;
+
+        const response = await llmClient.chat([
+          {
+            role: "user",
+            content: retryPrompt,
+          },
+        ]);
+
+        const rawResponse = response.choices?.[0]?.message?.content || "";
+
+        // Parse with Zod validation
+        const parseResult = parseCodeGeneration(rawResponse);
+
+        if (parseResult.success) {
+          const { filename: editedFilename, content } = parseResult.data;
+
+          agent.getVFS().writeFile(editedFilename, content);
+
+          const lines = content.split("\n").length;
+          const size = new Blob([content]).size;
+
+          console.log(`✓ Code edited (${lines} lines)`);
+
+          return {
+            success: true,
+            action: "edit",
+            filename: editedFilename,
+            size,
+            lines,
+            modified: true,
+            content, // Include full content for agent's memory!
+            preview: content.substring(0, 200) + "...",
+          };
+        } else {
+          lastError = parseResult.zodErrors
+            ? `Validation errors:\n${parseResult.zodErrors}`
+            : parseResult.error;
+
+          if (process.env.DEBUG === "true") {
+            console.log(chalk.red(`[FileTool] Parse error: ${lastError}`));
+          }
+
+          if (attempt === maxRetries) {
+            return {
+              success: false,
+              error: `Failed to edit code after ${maxRetries} attempts. Last error: ${lastError}`,
+            };
+          }
+        }
       }
-
-      // Clean up potential markdown code blocks
-      let cleanCode = modifiedCode.trim();
-      const codeBlockMatch = cleanCode.match(/```(?:\w+)?\s*\n([\s\S]*?)\n```/);
-      if (codeBlockMatch) {
-        cleanCode = codeBlockMatch[1];
-      }
-
-      // Write the modified code
-      agent.getVFS().writeFile(filename, cleanCode);
-
-      const lines = cleanCode.split("\n").length;
-      const size = new Blob([cleanCode]).size;
-
-      console.log(`✓ Code edited (${lines} lines)`);
 
       return {
-        success: true,
-        action: "edit",
-        filename,
-        size,
-        lines,
-        modified: true,
-        preview: cleanCode.substring(0, 200) + "...",
+        success: false,
+        error: "Code editing failed (unexpected end of retry loop)",
       };
     } catch (error) {
       return {

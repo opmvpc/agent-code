@@ -66,6 +66,7 @@ export function parseJSONResponse(responseText: string): ParseResult {
     logger.error("Failed to parse JSON response", {
       error: errorMessage,
       responsePreview: responseText.substring(0, 200),
+      fullResponseText: responseText, // ← LOG COMPLET pour debug!
     });
 
     return {

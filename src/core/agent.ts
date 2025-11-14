@@ -28,6 +28,7 @@ import chalk from "chalk";
 import { TodoManager } from "./todo-manager.js";
 import { StorageManager } from "../storage/storage-manager.js";
 import { UnstorageDriver } from "../storage/unstorage-driver.js";
+import type { ToolResult } from "../tools/base-tool.js";
 import type { SessionData } from "../storage/storage-driver.js";
 import logger, {
   logToolCall,
@@ -447,31 +448,20 @@ export class Agent {
               }
 
               // CRITICAL: Add result to messages for next action
-              // Different handling based on tool type
-              if (
-                action.tool === "send_message" &&
-                result.success &&
-                result.message
-              ) {
-                // send_message: Add as assistant message + save to memory
-                const assistantMessage = result.message;
-                messages.push({
-                  role: "assistant",
-                  content: assistantMessage,
-                });
-                this.memory.addMessage("assistant", assistantMessage);
-              } else {
-                // Other tools: Add as tool result + save to memory
-                const toolResult = JSON.stringify(result);
-                messages.push({
-                  role: "tool",
-                  tool_name: action.tool,
-                  content: toolResult,
-                });
+              // ALL tools (including send_message) are stored as tool results!
+              // The agent should ONLY see JSON in its own messages (role: assistant)
+              const toolSummary = this.createToolResultSummary(
+                action.tool,
+                result
+              );
+              messages.push({
+                role: "tool",
+                tool_name: action.tool,
+                content: toolSummary,
+              });
 
-                // Save tool result to memory with proper metadata
-                this.memory.addToolResult(action.tool, toolResult);
-              }
+              // Save tool result to memory with proper metadata
+              this.memory.addToolResult(action.tool, toolSummary);
             } catch (error) {
               Display.error(`    ✗ ${(error as Error).message}`);
               messages.push({
@@ -530,6 +520,75 @@ export class Agent {
       message: finalMessage || "Task completed.",
       shouldGenerateTitle: isFirstMessage, // Signal qu'il faut générer un titre
     };
+  }
+
+  /**
+   * Create a concise, human-readable summary of tool execution result
+   * Instead of dumping full JSON, create a SHORT message the AI can understand!
+   */
+  private createToolResultSummary(
+    toolName: string,
+    result: ToolResult
+  ): string {
+    if (!result.success) {
+      return `❌ ${toolName} failed: ${result.error}`;
+    }
+
+    // Create concise summaries based on tool type
+    switch (toolName) {
+      case "file":
+        if (result.action === "write") {
+          return `✅ File created: ${result.filename} (${result.lines} lines)`;
+        } else if (result.action === "edit") {
+          return `✅ File edited: ${result.filename} (${result.lines} lines)`;
+        } else if (result.action === "read") {
+          return `✅ File read: ${result.filename} (${result.lines} lines, ${result.size} bytes)`;
+        } else if (result.action === "delete") {
+          return `✅ File deleted: ${result.filename}`;
+        } else if (result.action === "list") {
+          return `✅ Listed ${result.count} files`;
+        }
+        break;
+
+      case "todo":
+        if (result.action === "add") {
+          const count = Array.isArray(result.tasks) ? result.tasks.length : 1;
+          return `✅ Added ${count} todo(s) to the list`;
+        } else if (result.action === "markasdone") {
+          return `✅ Marked todo as done: "${result.task}"`;
+        } else if (result.action === "delete") {
+          return `✅ Deleted todo: "${result.task}"`;
+        } else if (result.action === "reset") {
+          return `✅ Cleared all todos`;
+        }
+        break;
+
+      case "execute":
+        if (result.output) {
+          const preview = result.output.substring(0, 100);
+          return `✅ Code executed successfully. Output: ${preview}${
+            result.output.length > 100 ? "..." : ""
+          }`;
+        }
+        return `✅ Code executed successfully (no output)`;
+
+      case "send_message":
+        // Store the ACTUAL message sent to user (not just "message sent")
+        if (result.success && result.message) {
+          return result.message; // The actual message content!
+        }
+        return `✅ Message sent to user`;
+
+      case "stop":
+        return `✅ Agent stopped`;
+
+      default:
+        // Fallback: use message if available, or generic success
+        return result.message || `✅ ${toolName} completed successfully`;
+    }
+
+    // Fallback
+    return result.message || `✅ ${toolName} completed`;
   }
 
   /**
