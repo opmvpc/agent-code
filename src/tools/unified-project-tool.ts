@@ -16,7 +16,7 @@ export class ProjectTool extends BaseTool {
         action: {
           type: "string",
           enum: ["create", "switch", "list"],
-          description: "Action to perform: 'create' (create new project), 'switch' (load existing project), 'list' (show all projects)",
+          description: "Action to perform: 'create' (create new project and switch to it), 'switch' (load existing project), 'list' (show all projects)",
         },
         name: {
           type: "string",

@@ -9,8 +9,8 @@ import type { Agent } from "../../src/core/agent.js";
 
 describe("ToolRegistry", () => {
   it("should have multiple tools registered", () => {
-    // Au lieu de hardcoder le nombre, on vérifie qu'il y en a un minimum
-    expect(toolRegistry.count()).toBeGreaterThan(10);
+    // With unified tools: file, project, todo, execute_code, send_message, stop = 6 tools
+    expect(toolRegistry.count()).toBeGreaterThanOrEqual(6);
 
     // Vérifier qu'on a bien des tools
     const allTools = toolRegistry.getAllTools();
@@ -18,13 +18,13 @@ describe("ToolRegistry", () => {
   });
 
   it("should have all essential tools registered", () => {
-    // Liste des tools essentiels (catégories principales)
+    // Updated for unified tools system
     const essentialTools = {
-      files: ["write_file", "read_file", "list_files", "delete_file"],
+      files: ["file"], // Unified file tool (read/write/edit/list/delete)
       execution: ["execute_code"],
-      todos: ["todo"], // Unified tool!
+      todos: ["todo"], // Unified todo tool (add/delete/markasdone/reset)
       control: ["send_message", "stop"],
-      projects: ["create_project", "switch_project", "list_projects"],
+      projects: ["project"], // Unified project tool (create/switch/list)
     };
 
     // Vérifier chaque catégorie
@@ -58,10 +58,10 @@ describe("ToolRegistry", () => {
   });
 
   it("should get a tool by name", () => {
-    const tool = toolRegistry.getTool("write_file");
+    const tool = toolRegistry.getTool("file");
 
     expect(tool).toBeDefined();
-    expect(tool?.name).toBe("write_file");
+    expect(tool?.name).toBe("file");
     expect(tool?.description).toBeTruthy();
   });
 
@@ -71,7 +71,7 @@ describe("ToolRegistry", () => {
   });
 
   it("should execute a tool successfully", async () => {
-    // Mock agent avec méthodes minimales
+    // Mock agent avec méthodes minimales pour unified file tool
     const mockAgent = {
       getVFS: () => ({
         writeFile: () => {},
@@ -79,14 +79,20 @@ describe("ToolRegistry", () => {
         listFiles: () => [],
         deleteFile: () => {},
       }),
-      getMemory: () => ({
-        addFileCreated: () => {},
+      getLLMClient: () => ({
+        chat: async () => ({
+          choices: [{ message: { content: "console.log('test');" } }],
+        }),
       }),
     } as unknown as Agent;
 
     const result = await toolRegistry.execute(
-      "write_file",
-      { filename: "test.js", content: "console.log('test');" },
+      "file",
+      {
+        action: "write",
+        filename: "test.js",
+        instructions: "create a test file",
+      },
       mockAgent
     );
 

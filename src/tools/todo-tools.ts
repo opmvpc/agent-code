@@ -108,11 +108,8 @@ export class TodoTool extends BaseTool {
     if (Array.isArray(tasks)) {
       if (tasks.length === 0) {
         return {
-          success: true,
-          action: "add",
-          added: 0,
-          tasks: [],
-          stats: todoManager.getStats(),
+          success: false,
+          error: "tasks array must contain at least one task",
         };
       }
 
@@ -128,7 +125,7 @@ export class TodoTool extends BaseTool {
 
     return {
       success: false,
-      error: "tasks must be a string or an array of strings",
+      error: "tasks must be an array of strings (or a single string)",
     };
   }
 

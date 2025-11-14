@@ -25,7 +25,6 @@ import {
 } from "fs";
 import { join } from "path";
 import chalk from "chalk";
-import { ToolParser, type ParsedToolCall } from "../llm/tool-parser.js";
 import { TodoManager } from "./todo-manager.js";
 import { StorageManager } from "../storage/storage-manager.js";
 import { UnstorageDriver } from "../storage/unstorage-driver.js";
@@ -35,8 +34,12 @@ import logger, {
   logLLMRequest,
   logThinking,
   logError,
+  logToolCallsRequested,
+  logAssistantResponse,
 } from "../utils/logger.js";
 import { toolRegistry } from "../tools/index.js";
+import { parseWithRetry } from "./agent-parser.js";
+import type { AgentResponse } from "../llm/response-schema.js";
 
 export interface AgentConfig {
   apiKey: string;
@@ -57,31 +60,26 @@ export class Agent {
   private fileManager: FileManager;
   private executor: CodeExecutor;
   private llmClient: OpenRouterClient;
-  private toolParser: ToolParser;
   private todoManager: TodoManager;
   private storageManager: StorageManager | null = null;
   private projectName: string;
   private lastActions: Array<{ tool: string; result: any }> = [];
+  private config: AgentConfig; // Store config for reload
 
   constructor(config: AgentConfig) {
+    this.config = config; // Save for later reload
     // Initialize components
     this.memory = new AgentMemory(10);
     this.vfs = new VirtualFileSystem();
     this.fileManager = new FileManager(this.vfs);
     this.executor = new CodeExecutor();
-    this.toolParser = new ToolParser();
     this.todoManager = new TodoManager();
 
     // Generate project name (timestamp-based)
     this.projectName = `project_${Date.now()}`;
 
-    this.llmClient = new OpenRouterClient({
-      apiKey: config.apiKey,
-      model: config.model,
-      temperature: config.temperature,
-      reasoning: config.reasoning,
-      tools: toolRegistry.getToolDefinitions(), // Tools from registry!
-    });
+    // Initialize LLM client
+    this.llmClient = this.createLLMClient();
 
     // Initialize storage if enabled
     if (config.storage?.enabled !== false) {
@@ -240,152 +238,228 @@ export class Agent {
           this.llmClient.getReasoningConfig()
         );
 
-        // Call LLM WITHOUT streaming (actions only - no text output)
-        // L'agent ne parle pas directement, il appelle juste des tools!
+        // Call LLM to get JSON response (custom system!)
         const response = await this.llmClient.chat(messages);
 
-        // Extract tool calls from response
-        const assistantMessage = response.message;
-        const currentToolCalls = assistantMessage.tool_calls || [];
+        // Extract message and reasoning
+        const message = response.choices?.[0]?.message;
+        const responseText = message?.content || "";
+        const reasoning = message?.reasoning;
 
-        // Debug info if enabled
-        if (process.env.DEBUG === "true") {
-          console.log(chalk.dim(`\n[Iteration ${iterationCount}]`));
-          if (currentToolCalls.length > 0) {
-            console.log(chalk.dim(`Tool calls: ${currentToolCalls.length}`));
-          }
-        }
+        // Log full API response for debugging
+        logger.info("Raw API response received", {
+          hasChoices: !!response.choices,
+          choicesLength: response.choices?.length,
+          firstChoice: response.choices?.[0]
+            ? {
+                hasMessage: !!message,
+                messageRole: message?.role,
+                contentLength: responseText.length,
+                hasReasoning: !!reasoning,
+                reasoningLength: reasoning?.length,
+                finishReason: response.choices[0].finish_reason,
+              }
+            : null,
+        });
 
-        // Add assistant message to history
-        messages.push(assistantMessage);
-
-        // If we have tool calls, execute them
-        if (currentToolCalls.length > 0) {
-          console.log(chalk.cyan("\n🔧 Actions:"));
-
-          // Parse and execute each tool call
-          const parsedToolCalls = this.toolParser.parseToolCalls({
-            role: "assistant",
-            content: assistantMessage.content,
-            tool_calls: currentToolCalls,
+        // Log reasoning if present
+        if (reasoning) {
+          logger.info("Reasoning trace", {
+            reasoning,
+            length: reasoning.length,
           });
 
-          let shouldStop = false;
-          const hasStopCall = parsedToolCalls.some((tc) => tc.name === "stop");
+          // Display reasoning in UI
+          console.log(chalk.magenta("\n💭 Reasoning:"));
+          console.log(chalk.dim(reasoning));
+          console.log();
+        }
 
-          // 🚨 CRITICAL RULE: `stop` must be called ALONE!
-          if (hasStopCall && parsedToolCalls.length > 1) {
-            console.log();
-            Display.error(
-              "⚠️  WARNING: 'stop' tool must be called ALONE in final iteration!"
-            );
-            Display.error(
-              "    The stop call will be ignored. Please call stop by itself."
-            );
-            console.log();
-            // Remove stop from the list and continue
-            parsedToolCalls.splice(
-              parsedToolCalls.findIndex((tc) => tc.name === "stop"),
-              1
-            );
+        // Add assistant response to history
+        messages.push({
+          role: "assistant",
+          content: responseText,
+        });
+
+        // Parse JSON response avec retry si erreur Zod
+        const parseResult = await parseWithRetry(
+          responseText,
+          messages,
+          this.llmClient
+        );
+
+        if (!parseResult.success || !parseResult.data) {
+          logger.error("Failed to parse response after retries", {
+            error: parseResult.error,
+            retries: parseResult.retryCount,
+          });
+          throw new Error(
+            `Failed to parse agent response: ${parseResult.error}`
+          );
+        }
+
+        const agentResponse = parseResult.data;
+
+        // Log parsed response
+        logger.info("Agent response parsed", {
+          mode: agentResponse.mode,
+          actionsCount: agentResponse.actions.length,
+          tools: agentResponse.actions.map((a) => a.tool),
+          reasoning: agentResponse.reasoning?.substring(0, 100),
+        });
+
+        // Debug info
+        if (process.env.DEBUG === "true") {
+          console.log(
+            chalk.dim(
+              `\n[Iteration ${iterationCount}] Mode: ${agentResponse.mode}`
+            )
+          );
+          console.log(chalk.dim(`Actions: ${agentResponse.actions.length}`));
+        }
+
+        // Display agent's reasoning (from JSON response) if present
+        if (agentResponse.reasoning) {
+          console.log(chalk.yellow("\n🤔 Agent's plan:"));
+          console.log(chalk.dim(agentResponse.reasoning));
+          console.log();
+        }
+
+        // Execute actions based on mode
+        console.log(chalk.cyan(`\n🔧 Actions (${agentResponse.mode}):`));
+
+        let shouldStop = false;
+        const hasStopAction = agentResponse.actions.some(
+          (a) => a.tool === "stop"
+        );
+
+        // Check for stop - if present, it's validated to be alone or last
+        if (hasStopAction) {
+          // If stop is alone, we break immediately
+          if (agentResponse.actions.length === 1) {
+            console.log(chalk.green("\n  ✓ Stop requested - finishing"));
+            break;
           }
+          // If stop is not alone, it must be last - we'll hit it during sequential execution
+        }
 
-          for (const toolCall of parsedToolCalls) {
-            // Track if we should stop
-            if (toolCall.name === "stop") {
-              shouldStop = true;
-            }
-
-            // Don't display send_message (it's in the streamed content already)
-            if (toolCall.name === "send_message") {
-              // Execute silently
-              const result = await this.executeTool(toolCall);
-              messages.push({
-                role: "tool",
-                tool_call_id: toolCall.id,
-                content: JSON.stringify(result),
-              });
-              continue;
-            }
-
-            // Display what we're doing avec détails!
-            console.log(
-              "\n" +
-                chalk.cyan("  ➤ ") +
-                this.toolParser.formatToolCall(toolCall)
-            );
-
-            // Affiche les détails de l'action en debug
-            if (process.env.DEBUG === "true") {
-              this.displayToolDetails(toolCall);
-            }
-
-            // Validate tool call
-            const validation = this.toolParser.validateToolCall(toolCall);
-            if (!validation.valid) {
-              // Add error result
-              messages.push({
-                role: "tool",
-                tool_call_id: toolCall.id,
-                content: JSON.stringify({ error: validation.error }),
-              });
-              Display.error(`    ✗ ${validation.error}`);
-              continue;
-            }
-
-            // Execute tool
-            const startTime = Date.now();
-            const result = await this.executeTool(toolCall);
-            const duration = Date.now() - startTime;
-
-            // Add tool result to messages
-            messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: JSON.stringify(result),
-            });
-
-            // Show success avec timing
-            if (result.success) {
-              const timing =
-                duration > 100
-                  ? chalk.yellow(` (${duration}ms)`)
-                  : chalk.gray(` (${duration}ms)`);
-              console.log(chalk.green("    ✓ Done") + timing);
-
-              // Affiche le résultat en mode debug
-              if (process.env.DEBUG === "true" && result.output) {
+        // Execute based on mode
+        if (agentResponse.mode === "parallel") {
+          // Execute all actions in parallel with Promise.all
+          const results = await Promise.all(
+            agentResponse.actions.map(async (action) => {
+              console.log(chalk.cyan(`  ➤ ${action.tool}`));
+              if (process.env.DEBUG === "true") {
                 console.log(
-                  chalk.gray(
-                    `    Output: ${result.output.substring(0, 100)}...`
+                  chalk.dim(
+                    `     Args: ${JSON.stringify(action.args).substring(
+                      0,
+                      100
+                    )}`
                   )
                 );
               }
-            } else if (result.error) {
-              Display.error(`    ✗ ${result.error}`);
+
+              const startTime = Date.now();
+              try {
+                const result = await toolRegistry.execute(
+                  action.tool,
+                  action.args,
+                  this
+                );
+                const duration = Date.now() - startTime;
+
+                // Show result
+                if (result.success) {
+                  console.log(
+                    chalk.green(`    ✓ Done`) + chalk.gray(` (${duration}ms)`)
+                  );
+                } else {
+                  Display.error(`    ✗ ${result.error}`);
+                }
+
+                return { action, result, success: result.success };
+              } catch (error) {
+                Display.error(`    ✗ ${(error as Error).message}`);
+                return {
+                  action,
+                  result: { error: (error as Error).message },
+                  success: false,
+                };
+              }
+            })
+          );
+
+          // Add results to messages as context
+          const resultsText = results
+            .map(
+              (r) =>
+                `${r.action.tool}: ${r.success ? "success" : r.result.error}`
+            )
+            .join(", ");
+          messages.push({
+            role: "user",
+            content: `Results: ${resultsText}`,
+          });
+        } else {
+          // Sequential execution - one by one
+          for (const action of agentResponse.actions) {
+            // If we hit stop, we break the loop and finish
+            if (action.tool === "stop") {
+              console.log(chalk.green("\n  ✓ Stop requested - finishing"));
+              shouldStop = true;
+              break;
+            }
+
+            console.log(chalk.cyan(`  ➤ ${action.tool}`));
+            if (process.env.DEBUG === "true") {
+              console.log(
+                chalk.dim(
+                  `     Args: ${JSON.stringify(action.args).substring(0, 100)}`
+                )
+              );
+            }
+
+            const startTime = Date.now();
+            try {
+              const result = await toolRegistry.execute(
+                action.tool,
+                action.args,
+                this
+              );
+              const duration = Date.now() - startTime;
+
+              // Show result
+              if (result.success) {
+                console.log(
+                  chalk.green(`    ✓ Done`) + chalk.gray(` (${duration}ms)`)
+                );
+              } else {
+                Display.error(`    ✗ ${result.error}`);
+              }
+
+              // Add result to messages for next action
+              messages.push({
+                role: "user",
+                content: `${action.tool} result: ${JSON.stringify(result)}`,
+              });
+            } catch (error) {
+              Display.error(`    ✗ ${(error as Error).message}`);
+              messages.push({
+                role: "user",
+                content: `${action.tool} error: ${(error as Error).message}`,
+              });
             }
           }
 
-          // Si l'agent a appelé stop, il a fini!
+          // If we stopped mid-execution, break the main loop
           if (shouldStop) {
-            console.log();
-            Display.info("🏁 Agent stopped - all tasks complete!");
-            finalMessage = "Task completed.";
             break;
           }
-
-          // Continue loop to get next response
-          continue;
         }
 
-        // No tool calls - loop stops automatically (empty response)
-        console.log();
-        Display.info(
-          "🏁 Loop stopped - no tool calls requested (agent finished)"
-        );
-        finalMessage = assistantMessage.content || "Task completed.";
-        this.memory.addMessage("assistant", finalMessage);
-        break;
+        // Continue to next iteration
+        continue;
       } catch (error) {
         throw new Error(
           `Failed to process request: ${(error as Error).message}`
@@ -408,8 +482,9 @@ export class Agent {
   /**
    * Execute a single tool call and return result
    * Using the new ToolRegistry system! 🎯
+   * NOTE: This method is no longer used with the JSON-based tool calling
    */
-  private async executeTool(toolCall: ParsedToolCall): Promise<any> {
+  private async executeTool(toolCall: any): Promise<any> {
     const startTime = Date.now();
 
     try {
@@ -575,6 +650,33 @@ export class Agent {
   /**
    * Get LLM client instance (for command handler)
    */
+  /**
+   * Créer une instance LLM client (factory method)
+   */
+  private createLLMClient(): OpenRouterClient {
+    return new OpenRouterClient({
+      apiKey: this.config.apiKey,
+      model: this.config.model,
+      temperature: this.config.temperature || 1.0,
+      reasoning: this.config.reasoning,
+      tools: [], // Tools are now in the prompt!
+    });
+  }
+
+  /**
+   * Recharger la config du modèle (appliqué immédiatement!)
+   */
+  reloadModelConfig(model: string, reasoning?: ReasoningOptions): void {
+    this.config.model = model;
+    this.config.reasoning = reasoning;
+
+    // Recréer l'instance LLM avec la nouvelle config
+    this.llmClient = this.createLLMClient();
+
+    console.log(chalk.green("\n✅ Model reloaded and active immediately!"));
+    console.log(chalk.dim(`   Now using: ${model}`));
+  }
+
   getLLMClient(): OpenRouterClient {
     return this.llmClient;
   }
@@ -703,9 +805,9 @@ export class Agent {
    */
   createProject(name: string): void {
     this.projectName = name;
-    // Clear VFS for fresh start
-    this.vfs = new VirtualFileSystem();
-    this.fileManager = new FileManager(this.vfs);
+    // Clear VFS for fresh start (don't replace, just reset!)
+    this.vfs.reset();
+    // FileManager keeps the same VFS reference, no need to recreate
   }
 
   /**
@@ -874,8 +976,9 @@ export class Agent {
 
   /**
    * Affiche les détails d'un tool call (mode debug)
+   * NOTE: This method is no longer used with the JSON-based tool calling
    */
-  private displayToolDetails(toolCall: ParsedToolCall): void {
+  private displayToolDetails(toolCall: any): void {
     const details: string[] = [];
 
     if (toolCall.arguments.filename) {

@@ -87,12 +87,8 @@ export class OpenRouterClient {
         },
       };
 
-      // Add tools if configured (native tool calling! 🎉)
-      if (this.tools && this.tools.length > 0) {
-        requestBody.tools = this.tools;
-        requestBody.tool_choice = "auto"; // Let model decide when to use tools
-        requestBody.parallel_tool_calls = true; // Enable parallel tool execution
-      }
+      // Tools are now in the system prompt (custom JSON format)
+      // No native tool calling anymore!
 
       // Add reasoning params if configured (pour les modèles intelligents 🧠)
       if (this.reasoning) {
@@ -116,8 +112,6 @@ export class OpenRouterClient {
 
       const response = await this.client.chat.completions.create(requestBody);
 
-      const message = response.choices[0]?.message;
-
       // Parse usage info from OpenRouter (the good stuff 📊)
       this.updateUsageStats(response.usage);
 
@@ -125,6 +119,7 @@ export class OpenRouterClient {
 
       if (process.env.DEBUG === "true") {
         const tokens = response.usage?.total_tokens || "?";
+        const message = response.choices[0]?.message;
         const hasTools = message?.tool_calls
           ? ` | ${message.tool_calls.length} tool(s)`
           : "";
@@ -135,7 +130,8 @@ export class OpenRouterClient {
         );
       }
 
-      return message;
+      // Return full response (not just message) for access to choices, usage, etc.
+      return response;
     } catch (error) {
       if (error instanceof Error) {
         // Handle rate limits
@@ -229,12 +225,8 @@ export class OpenRouterClient {
         },
       };
 
-      // Add tools if configured AND enabled
-      if (enableTools && this.tools && this.tools.length > 0) {
-        requestBody.tools = this.tools;
-        requestBody.tool_choice = "auto";
-        requestBody.parallel_tool_calls = true; // Enable parallel tool execution
-      }
+      // Tools are now in the system prompt (custom JSON format)
+      // No native tool calling in streaming anymore!
 
       // Add reasoning params if configured
       if (this.reasoning) {

@@ -186,6 +186,7 @@ export class CommandHandler {
     this.vfs.reset();
     this.memory.reset();
     this.llmClient.resetStats();
+    this.agent.getTodoManager().clearTodos();
     Display.success('Everything reset! Fresh start! 🔄');
   }
 
@@ -539,6 +540,14 @@ export class CommandHandler {
       console.log(chalk.green('✓ Model configuration saved!'));
     }
 
+    // Reload model in agent immediately! 🚀
+    const reasoning = newSelection.reasoningEnabled ? {
+      enabled: true,
+      effort: newSelection.reasoningEffort
+    } : undefined;
+
+    this.agent.reloadModelConfig(newSelection.modelId, reasoning);
+
     // Afficher les infos
     this.modelSelector.displayModelInfo(
       newSelection.modelId,
@@ -547,13 +556,8 @@ export class CommandHandler {
     );
 
     console.log(
-      chalk.yellow('\n⚠️  Note: Model change will take effect on next request.\n') +
-      chalk.gray('    Current conversation will continue with the current model.')
-    );
-
-    Display.warning(
-      'RESTART the agent for model change to take full effect!\n' +
-      'Or the new config will apply to future sessions only.'
+      chalk.green('\n✅ Model change applied immediately!\n') +
+      chalk.dim('    Next message will use the new model.')
     );
   }
 }

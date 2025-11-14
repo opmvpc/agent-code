@@ -121,6 +121,51 @@ export function logThinking(content: string): void {
 }
 
 /**
+ * Log tool calls requested by LLM
+ */
+export function logToolCallsRequested(toolCalls: any[]): void {
+  logger.info(`LLM requested ${toolCalls.length} tool call(s)`, {
+    count: toolCalls.length,
+    tools: toolCalls.map(tc => ({
+      id: tc.id,
+      name: tc.function?.name,
+      arguments: tc.function?.arguments,
+    })),
+  });
+}
+
+/**
+ * Log assistant response content
+ */
+export function logAssistantResponse(content: string | null, hasToolCalls: boolean, reasoning?: string): void {
+  const logData: any = {
+    hasToolCalls,
+  };
+
+  if (content) {
+    logData.fullContent = content;
+    logData.contentLength = content.length;
+    logger.info(`Assistant response: ${content.substring(0, 200)}...`, logData);
+  } else if (hasToolCalls) {
+    logger.info("Assistant response: [tool calls only, no text content]", {
+      hasToolCalls: true,
+    });
+  } else {
+    logger.info("Assistant response: [empty - no content, no tool calls]", {
+      hasToolCalls: false,
+    });
+  }
+
+  // Log reasoning separately if present
+  if (reasoning) {
+    logger.info("Reasoning trace in response", {
+      reasoning,
+      reasoningLength: reasoning.length,
+    });
+  }
+}
+
+/**
  * Helper pour logger les sessions
  */
 export function logSession(action: string, sessionId?: string, details?: any): void {

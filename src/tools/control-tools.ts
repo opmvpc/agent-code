@@ -115,8 +115,8 @@ export class StopTool extends BaseTool {
   async execute(args: Record<string, any>, agent: Agent): Promise<ToolResult> {
     return {
       success: true,
-      stopped: true,
-      message: "Agent stopped - all tasks complete",
+      action: "stop",
+      message: "All tasks completed. Agent has finished.",
     };
   }
 }
