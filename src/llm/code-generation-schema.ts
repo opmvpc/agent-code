@@ -66,7 +66,7 @@ export function parseCodeGeneration(rawResponse: string): {
  */
 export function getCodeGenerationJsonSchema(): {
   type: "json_schema";
-  json_schema: {
+  jsonSchema: {  // camelCase pour le SDK officiel!
     name: string;
     strict: boolean;
     schema: any;

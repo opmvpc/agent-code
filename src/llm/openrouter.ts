@@ -1,13 +1,22 @@
 // src/llm/openrouter.ts
 /**
  * OpenRouter client
- * Parce que payer OpenAI c'est pour les riches 💸
+ * Avec le SDK OFFICIEL maintenant! 🔥
  */
 
-import OpenAI from "openai";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { OpenRouter } from "@openrouter/sdk";
+// Use simple type for messages to avoid TS resolution issues
 import chalk from "chalk";
 import logger from "../utils/logger.js";
+
+// Type for messages (compatible with OpenRouter SDK)
+export type Message = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  name?: string;
+  // For tool results:
+  toolCallId?: string;
+};
 
 export interface ReasoningOptions {
   enabled?: boolean;
@@ -33,10 +42,11 @@ export interface OpenRouterConfig {
   tools?: any[]; // Tool definitions for native tool calling
   responseFormat?: {
     type: "json_schema";
-    json_schema: {
+    jsonSchema: {  // camelCase pour le SDK officiel!
       name: string;
-      strict: boolean;
-      schema: any;
+      description?: string;
+      schema?: any;
+      strict?: boolean;
     };
   };
 }
@@ -50,7 +60,7 @@ export interface WebSearchOptions {
 }
 
 export class OpenRouterClient {
-  private client: OpenAI;
+  private client: OpenRouter;
   private model: string;
   private temperature: number;
   private reasoning?: ReasoningOptions;
@@ -63,20 +73,10 @@ export class OpenRouterClient {
   private totalCachedTokens = 0;
 
   constructor(config: OpenRouterConfig) {
-    // Silent mode SAUF si DEBUG=verbose (pour les vrais masochistes 🤡)
-    if (process.env.DEBUG !== "verbose") {
-      process.env.OPENAI_LOG = "silent";
-    } else {
-      process.env.OPENAI_LOG = "debug"; // Full spam mode pour les curieux
-    }
-
-    this.client = new OpenAI({
-      baseURL: "https://openrouter.ai/api/v1",
+    // Create OpenRouter client (le vrai SDK officiel! 🔥)
+    this.client = new OpenRouter({
       apiKey: config.apiKey,
-      defaultHeaders: {
-        "HTTP-Referer": "https://github.com/minimal-ts-agent",
-        "X-Title": "Minimal TS Agent",
-      },
+      serverURL: "https://openrouter.ai/api/v1",
     });
 
     this.model = config.model;
@@ -91,7 +91,7 @@ export class OpenRouterClient {
    * Supporte structured outputs via response_format! 🎯
    */
   async chat(
-    messages: ChatCompletionMessageParam[],
+    messages: Message[],
     options?: { responseFormat?: OpenRouterConfig["responseFormat"] }
   ): Promise<any> {
     const startTime = Date.now();
@@ -99,21 +99,17 @@ export class OpenRouterClient {
     try {
       this.requestCount++;
 
-      // Build request body
+      // Build request body (format du SDK officiel!)
       const requestBody: any = {
         model: this.model,
         messages,
         temperature: this.temperature,
-        // Enable usage accounting pour avoir les vrais coûts! 💰
-        usage: {
-          include: true,
-        },
       };
 
       // Add structured outputs if provided (prioritize options, then config)
       const responseFormat = options?.responseFormat || this.responseFormat;
       if (responseFormat) {
-        requestBody.response_format = responseFormat;
+        requestBody.responseFormat = responseFormat;
       }
 
       // Tools are now in the system prompt (custom JSON format)
@@ -139,7 +135,7 @@ export class OpenRouterClient {
         }
       }
 
-      const response = await this.client.chat.completions.create(requestBody);
+      const response = await this.client.chat.send(requestBody);
 
       // CRITICAL: Detect and log empty/broken responses
       if (!response.choices || response.choices.length === 0) {
@@ -169,10 +165,10 @@ export class OpenRouterClient {
       const duration = Date.now() - startTime;
 
       if (process.env.DEBUG === "true") {
-        const tokens = response.usage?.total_tokens || "?";
+        const tokens = response.usage?.totalTokens || "?";
         const message = response.choices[0]?.message;
-        const hasTools = message?.tool_calls
-          ? ` | ${message.tool_calls.length} tool(s)`
+        const hasTools = message?.toolCalls
+          ? ` | ${message.toolCalls.length} tool(s)`
           : "";
         console.log(
           chalk.gray(
@@ -245,7 +241,7 @@ export class OpenRouterClient {
       const systemPrompt =
         "You are a focused research assistant. Use the attached real-time web search results to produce a concise, factual summary. Cite every claim with markdown links named using the domain (e.g. [nytimes.com](https://nytimes.com/...)). If nothing relevant is found, say so.";
 
-      const messages: ChatCompletionMessageParam[] = [
+      const messages: Message[] = [
         { role: "system", content: systemPrompt },
         {
           role: "user",
@@ -260,14 +256,11 @@ export class OpenRouterClient {
         messages,
         temperature: options.temperature ?? 0.2,
         plugins: [pluginConfig],
-        usage: {
-          include: true,
-        },
       };
 
       if (options.searchContextSize) {
-        requestBody.web_search_options = {
-          search_context_size: options.searchContextSize,
+        requestBody.webSearchOptions = {
+          searchContextSize: options.searchContextSize,
         };
       }
 
@@ -288,7 +281,7 @@ export class OpenRouterClient {
         }
       }
 
-      const response = await this.client.chat.completions.create(requestBody);
+      const response = await this.client.chat.send(requestBody);
 
       this.updateUsageStats(response.usage);
 
@@ -318,7 +311,7 @@ export class OpenRouterClient {
    * Retry logic avec exponential backoff
    */
   async chatWithRetry(
-    messages: ChatCompletionMessageParam[],
+    messages: Message[],
     maxRetries = 3,
     options?: { responseFormat?: OpenRouterConfig["responseFormat"] }
   ): Promise<any> {
@@ -359,7 +352,7 @@ export class OpenRouterClient {
    * Yield des objets différents selon le type: content, thinking, tool_calls, usage
    */
   async *chatStream(
-    messages: ChatCompletionMessageParam[],
+    messages: Message[],
     options?: { enableTools?: boolean; temperature?: number }
   ): AsyncGenerator<any> {
     try {
@@ -374,10 +367,6 @@ export class OpenRouterClient {
         messages,
         temperature,
         stream: true,
-        // Enable usage accounting même en stream
-        stream_options: {
-          include_usage: true,
-        },
       };
 
       // Tools are now in the system prompt (custom JSON format)
@@ -402,10 +391,8 @@ export class OpenRouterClient {
         }
       }
 
-      // Cast to any pour éviter le type error (OpenAI SDK typing issue avec stream)
-      const stream: any = await this.client.chat.completions.create(
-        requestBody
-      );
+      // Stream avec le SDK officiel! 🌊
+      const stream: any = await this.client.chat.send(requestBody);
 
       // Accumulate tool calls across chunks (they come fragmented)
       const toolCallsMap: Map<number, any> = new Map();

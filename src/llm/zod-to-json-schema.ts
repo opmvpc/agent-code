@@ -12,7 +12,7 @@ import { z } from "zod";
  */
 export function zodToJsonSchema(zodSchema: z.ZodType, name: string = "response"): {
   type: "json_schema";
-  json_schema: {
+  jsonSchema: {  // camelCase pour le SDK officiel OpenRouter!
     name: string;
     strict: boolean;
     schema: any;
@@ -22,7 +22,7 @@ export function zodToJsonSchema(zodSchema: z.ZodType, name: string = "response")
 
   return {
     type: "json_schema",
-    json_schema: {
+    jsonSchema: {  // camelCase!
       name,
       strict: true, // Always strict mode for type safety!
       schema: jsonSchema,

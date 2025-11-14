@@ -433,6 +433,9 @@ export class Agent {
               );
             }
 
+            // Generate unique tool call ID (format compatible with OpenAI/OpenRouter)
+            const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+
             const startTime = Date.now();
             try {
               const result = await toolRegistry.execute(
@@ -458,14 +461,16 @@ export class Agent {
                 action.tool,
                 result
               );
+              
+              // Add as proper "tool" role with toolCallId (standard LLM format)
               messages.push({
                 role: "tool",
-                tool_name: action.tool,
                 content: toolSummary,
+                toolCallId: toolCallId,
               });
 
               // Save tool result to memory with proper metadata
-              this.memory.addToolResult(action.tool, toolSummary);
+              this.memory.addToolResult(action.tool, toolSummary, toolCallId);
             } catch (error) {
               Display.error(`    ✗ ${(error as Error).message}`);
               messages.push({
@@ -945,12 +950,12 @@ export class Agent {
       const messages = this.memory.getMessages();
 
       // Save conversation data (messages + todos)
-      // Messages now include tool results with proper metadata!
+      // Messages include tool results with proper "tool" role and toolCallId
       this.projectManager.saveConversation(
         this.projectName,
         this.conversationId,
         {
-          messages, // Includes role: "tool" messages
+          messages, // System, user, assistant, and tool messages
           todos: this.todoManager.listTodos(),
           // vfs removed - saved separately at project level
         }

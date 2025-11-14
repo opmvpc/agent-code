@@ -8,18 +8,8 @@ export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   timestamp?: Date;
-  // Tool-specific metadata (for role: "tool")
-  tool_name?: string;
-  tool_call_id?: string;
-  // Assistant tool calls (for role: "assistant" with actions)
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
-    function: {
-      name: string;
-      arguments: string; // JSON string
-    };
-  }>;
+  // For tool results:
+  toolCallId?: string;
 }
 
 export interface ConversationContext {
@@ -67,11 +57,11 @@ export class AgentMemory {
   /**
    * Ajoute un résultat de tool à l'historique (avec métadonnées)
    */
-  addToolResult(toolName: string, result: string): void {
+  addToolResult(toolName: string, result: string, toolCallId: string): void {
     this.context.messages.push({
       role: "tool",
       content: result,
-      tool_name: toolName,
+      toolCallId: toolCallId,
       timestamp: new Date(),
     });
 
@@ -99,13 +89,20 @@ export class AgentMemory {
   }
 
   /**
-   * Récupère tous les messages pour le LLM
+   * Récupère tous les messages pour le LLM (format compatible SDK OpenRouter)
    */
   getMessages(): Message[] {
-    return this.context.messages.map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
+    return this.context.messages.map(m => {
+      const msg: any = {
+        role: m.role,
+        content: m.content,
+      };
+      // Add toolCallId for tool messages
+      if (m.role === 'tool' && m.toolCallId) {
+        msg.toolCallId = m.toolCallId;
+      }
+      return msg;
+    });
   }
 
   /**

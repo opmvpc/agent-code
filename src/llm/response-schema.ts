@@ -79,7 +79,7 @@ export function validateStopRule(response: AgentResponse): void {
  */
 export function getAgentResponseJsonSchema(): {
   type: "json_schema";
-  json_schema: {
+  jsonSchema: {  // camelCase pour le SDK officiel!
     name: string;
     strict: boolean;
     schema: any;
