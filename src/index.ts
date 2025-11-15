@@ -5,46 +5,6 @@
  */
 
 import 'dotenv/config';
-
-// FORCE silent OpenAI logs AVANT tout autre import (critique! 🚫)
-// Par défaut SILENT, sauf si explicitement DEBUG=verbose
-if (process.env.DEBUG !== "verbose") {
-  process.env.OPENAI_LOG = "silent";
-
-  // BRUTAL MODE: Override console pour filtrer les logs OpenAI 💀
-  const originalLog = console.log;
-  const originalError = console.error;
-  const originalWarn = console.warn;
-  const originalDebug = console.debug;
-
-  const filterOpenAI = (...args: any[]) => {
-    const firstArg = String(args[0] || '');
-    return firstArg.startsWith('OpenAI:'); // True = filtrer
-  };
-
-  console.log = (...args: any[]) => {
-    if (filterOpenAI(...args)) return; // SILENCE! 🤫
-    originalLog.apply(console, args);
-  };
-
-  console.error = (...args: any[]) => {
-    if (filterOpenAI(...args)) return;
-    originalError.apply(console, args);
-  };
-
-  console.warn = (...args: any[]) => {
-    if (filterOpenAI(...args)) return;
-    originalWarn.apply(console, args);
-  };
-
-  console.debug = (...args: any[]) => {
-    if (filterOpenAI(...args)) return;
-    originalDebug.apply(console, args);
-  };
-} else {
-  process.env.OPENAI_LOG = "debug";
-}
-
 import chalk from 'chalk';
 import { Agent } from './core/agent.js';
 import { ChatInterface } from './cli/chat.js';
@@ -56,6 +16,7 @@ import { ProjectMenu } from './cli/project-menu.js';
 import { StorageManager } from './storage/storage-manager.js';
 import { UnstorageDriver } from './storage/unstorage-driver.js';
 import { ProjectManager } from './workspace/project-manager.js';
+import { ErrorHandler } from './utils/error-handler.js';
 
 /**
  * Validate environment
@@ -256,16 +217,18 @@ async function main() {
   }
 }
 
-// Handle unhandled rejections
-process.on('unhandledRejection', (error: Error) => {
-  console.error(chalk.red('\n💥 Unhandled rejection:'), error);
-  process.exit(1);
+// Handle unhandled rejections - CRITICAL: Log EVERYTHING!
+process.on('unhandledRejection', (reason: unknown) => {
+  ErrorHandler.fatal(
+    reason instanceof Error
+      ? reason
+      : new Error(`Unhandled rejection: ${String(reason)}`)
+  );
 });
 
-// Handle uncaught exceptions
+// Handle uncaught exceptions - CRITICAL: Log EVERYTHING!
 process.on('uncaughtException', (error: Error) => {
-  console.error(chalk.red('\n💥 Uncaught exception:'), error);
-  process.exit(1);
+  ErrorHandler.fatal(error);
 });
 
 // Handle SIGINT (Ctrl+C)

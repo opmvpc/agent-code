@@ -10,6 +10,7 @@ import chalk from 'chalk';
 import { Display } from './display.js';
 import { CommandHandler } from './commands.js';
 import type { Agent } from '../core/agent.js';
+import { ErrorHandler } from '../utils/error-handler.js';
 
 export class ChatInterface {
   private commandHandler: CommandHandler;
@@ -123,7 +124,16 @@ export class ChatInterface {
         // Petit délai pour éviter conflit curseur avec inquirer
         await new Promise(resolve => setTimeout(resolve, 50));
       } catch (error) {
-        Display.error((error as Error).message);
+        // LOG L'ERREUR! (critique - c'est là que ça manquait!)
+        ErrorHandler.handle(error, {
+          location: "ChatInterface.chatLoop",
+          operation: "Process user request",
+          details: {
+            userMessage: userMessage.substring(0, 100), // Truncate for safety
+          },
+        }, {
+          display: true, // Affiche joliment dans le CLI
+        });
 
         // Suggest recovery
         if ((error as Error).message.includes('API key')) {

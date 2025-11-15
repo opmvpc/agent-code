@@ -16,6 +16,7 @@ import {
   getCodeEditPrompt,
 } from "../llm/code-generation-prompt.js";
 import logger from "../utils/logger.js";
+import { ErrorHandler, FileSystemError, ValidationError } from "../utils/error-handler.js";
 
 export class FileTool extends BaseTool {
   readonly name = "file";
@@ -485,6 +486,16 @@ export class FileTool extends BaseTool {
         error: "Code generation failed (unexpected end of retry loop)",
       };
     } catch (error) {
+      // LOG FILE WRITE FAILURES! (critique)
+      ErrorHandler.handle(error, {
+        location: "FileTool.handleAIWrite",
+        operation: "AI file generation",
+        details: {
+          filename,
+          instructionsLength: instructions.length,
+        },
+      });
+
       return {
         success: false,
         error: `Failed to write file ${filename}: ${(error as Error).message}`,
@@ -703,6 +714,16 @@ export class FileTool extends BaseTool {
         error: "Code editing failed (unexpected end of retry loop)",
       };
     } catch (error) {
+      // LOG FILE EDIT FAILURES! (critique)
+      ErrorHandler.handle(error, {
+        location: "FileTool.handleAIEdit",
+        operation: "AI file editing",
+        details: {
+          filename,
+          instructionsLength: instructions.length,
+        },
+      });
+
       return {
         success: false,
         error: (error as Error).message,

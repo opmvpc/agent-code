@@ -38,6 +38,7 @@ import logger, {
   logToolCallsRequested,
   logAssistantResponse,
 } from "../utils/logger.js";
+import { ErrorHandler, ToolError } from "../utils/error-handler.js";
 import { toolRegistry } from "../tools/index.js";
 import { parseWithRetry } from "./agent-parser.js";
 import type { AgentResponse } from "../llm/response-schema.js";
@@ -466,7 +467,23 @@ export class Agent {
               // Save tool result to memory with proper metadata
               this.memory.addToolResult(action.tool, toolSummary, toolCallId);
             } catch (error) {
-              Display.error(`    ✗ ${(error as Error).message}`);
+              // LOG TOOL ERRORS! (critique)
+              ErrorHandler.handle(
+                error,
+                {
+                  location: "Agent.processRequest",
+                  operation: `Tool execution: ${action.tool}`,
+                  details: {
+                    tool: action.tool,
+                    args: action.args,
+                    iterationCount,
+                  },
+                },
+                {
+                  display: true, // Affiche joliment
+                }
+              );
+
               messages.push({
                 role: "user",
                 content: `${action.tool} error: ${(error as Error).message}`,
@@ -484,6 +501,16 @@ export class Agent {
         // Continue to next iteration
         continue;
       } catch (error) {
+        // LOG MAIN LOOP ERRORS! (critique - c'est ici qu'on voit "Provider returned error"!)
+        ErrorHandler.handle(error, {
+          location: "Agent.processRequest (main loop)",
+          operation: "Agent iteration",
+          details: {
+            iterationCount,
+            messageCount: messages.length,
+          },
+        });
+
         throw new Error(
           `Failed to process request: ${(error as Error).message}`
         );
@@ -858,15 +885,15 @@ export class Agent {
     const snapshot: Record<string, string> = {};
     const files = this.vfs.listFiles();
 
-      for (const file of files) {
-        if (!file.isDirectory) {
-          try {
-            snapshot[file.path] = this.vfs.serializeFileContent(file.path);
-          } catch (error) {
-            // Skip files that can't be read
-            logger.warn(`Failed to read file for snapshot: ${file.path}`);
-          }
+    for (const file of files) {
+      if (!file.isDirectory) {
+        try {
+          snapshot[file.path] = this.vfs.serializeFileContent(file.path);
+        } catch (error) {
+          // Skip files that can't be read
+          logger.warn(`Failed to read file for snapshot: ${file.path}`);
         }
+      }
     }
 
     return snapshot;

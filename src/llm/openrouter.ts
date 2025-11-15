@@ -8,6 +8,7 @@ import { OpenRouter } from "@openrouter/sdk";
 // Use simple type for messages to avoid TS resolution issues
 import chalk from "chalk";
 import logger from "../utils/logger.js";
+import { ErrorHandler, ApiError } from "../utils/error-handler.js";
 
 // Type for messages (compatible with OpenRouter SDK)
 export type Message = {
@@ -207,31 +208,189 @@ export class OpenRouterClient {
       // Return full response (not just message) for access to choices, usage, etc.
       return response;
     } catch (error) {
-      if (error instanceof Error) {
-        // Handle rate limits
-        if (error.message.includes("rate limit")) {
-          throw new Error(
-            "Rate limit exceeded! T'abuses un peu lÃ ... ðŸŒ\n" +
-              "Attends quelques secondes et rÃ©essaie."
-          );
-        }
+      // PARSE OPENROUTER ERROR STRUCTURE (selon leur doc!)
+      const errorDetails = this.parseOpenRouterError(error);
 
-        // Handle auth errors
-        if (
-          error.message.includes("401") ||
-          error.message.includes("authentication")
-        ) {
-          throw new Error(
-            "API key invalide! T'as copiÃ© la bonne clÃ©? ðŸ”‘\n" +
-              "Check ton .env file."
-          );
-        }
+      // LOG AVEC TOUS LES DÉTAILS! (critique pour debugging)
+      ErrorHandler.handle(error, {
+        location: "OpenRouterClient.chat",
+        operation: "LLM API request",
+        details: {
+          model: this.model,
+          messageCount: messages.length,
+          hasResponseFormat: !!options?.responseFormat,
+          // Add parsed OpenRouter error details
+          errorCode: errorDetails.code,
+          httpStatus: errorDetails.httpStatus,
+          providerName: errorDetails.providerName,
+          errorMessage: errorDetails.message,
+          metadata: errorDetails.metadata,
+          raw: errorDetails.raw,
+        },
+      });
 
-        throw new Error(`LLM request failed: ${error.message}`);
+      // Throw avec message détaillé
+      throw new ApiError(
+        errorDetails.userMessage,
+        {
+          location: "OpenRouterClient.chat",
+          operation: errorDetails.operation,
+          details: errorDetails,
+        },
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
+   * Parse OpenRouter error structure according to their docs
+   * https://openrouter.ai/docs/api-reference/errors
+   */
+  private parseOpenRouterError(error: any): {
+    code: number | string;
+    httpStatus?: number;
+    message: string;
+    userMessage: string;
+    operation: string;
+    providerName?: string;
+    metadata?: Record<string, unknown>;
+    raw?: unknown;
+  } {
+    // Default values
+    let code: number | string = "UNKNOWN";
+    let httpStatus: number | undefined;
+    let message = "Unknown error";
+    let userMessage = "Unknown error occurred";
+    let operation = "API request";
+    let providerName: string | undefined;
+    let metadata: Record<string, unknown> | undefined;
+    let raw: unknown;
+
+    // Try to extract error from SDK structure
+    // The SDK might wrap errors in different ways
+    const errorObj = error?.error || error;
+
+    // Log raw error for debugging (helps us understand SDK structure)
+    logger.debug("Raw OpenRouter SDK error", {
+      errorType: typeof error,
+      errorKeys: error ? Object.keys(error) : [],
+      hasError: !!error?.error,
+      errorObjKeys: errorObj ? Object.keys(errorObj) : [],
+      fullError: JSON.stringify(error, null, 2).substring(0, 2000),
+    });
+
+    // Extract error code and message according to OpenRouter docs
+    if (errorObj?.code !== undefined) {
+      code = errorObj.code;
+      httpStatus = typeof code === "number" ? code : undefined;
+    }
+
+    if (errorObj?.message) {
+      message = errorObj.message;
+    } else if (error instanceof Error) {
+      message = error.message;
+    }
+
+    // Extract metadata (for moderation & provider errors)
+    if (errorObj?.metadata) {
+      metadata = errorObj.metadata;
+
+      // Provider error metadata
+      if (metadata?.provider_name) {
+        providerName = String(metadata.provider_name);
+      }
+      if (metadata?.raw) {
+        raw = metadata.raw;
       }
 
-      throw error;
+      // Moderation error metadata
+      if (metadata?.reasons && Array.isArray(metadata.reasons)) {
+        operation = "Moderation";
+        userMessage = `Content flagged by moderation: ${metadata.reasons.join(
+          ", "
+        )}`;
+        if (metadata?.flagged_input) {
+          userMessage += `\nFlagged text: "${metadata.flagged_input}"`;
+        }
+        return {
+          code,
+          httpStatus,
+          message,
+          userMessage,
+          operation,
+          providerName,
+          metadata,
+          raw,
+        };
+      }
     }
+
+    // Map HTTP codes to user-friendly messages
+    switch (httpStatus) {
+      case 400:
+        operation = "Bad Request";
+        userMessage = `Invalid request: ${message}`;
+        break;
+      case 401:
+        operation = "Authentication";
+        userMessage = `API key invalide! T'as copié la bonne clé? 🔑\nCheck ton .env file.`;
+        break;
+      case 402:
+        operation = "Payment Required";
+        userMessage = `Out of credits! Add more credits to your OpenRouter account.\n${message}`;
+        break;
+      case 403:
+        operation = "Forbidden";
+        userMessage = `Access forbidden (likely moderation): ${message}`;
+        break;
+      case 408:
+        operation = "Timeout";
+        userMessage = `Request timed out: ${message}`;
+        break;
+      case 429:
+        operation = "Rate Limit";
+        userMessage = `Rate limit exceeded! T'abuses un peu là... 🌊\nAttends quelques secondes et réessaie.`;
+        break;
+      case 502:
+        operation = "Model Down";
+        userMessage = `Model provider is down or returned invalid response: ${message}`;
+        break;
+      case 503:
+        operation = "No Provider Available";
+        userMessage = `No model provider available that meets your routing requirements: ${message}`;
+        break;
+      default:
+        // Check for common error patterns in message
+        if (message.toLowerCase().includes("rate limit")) {
+          operation = "Rate Limit";
+          userMessage = `Rate limit exceeded! Attends quelques secondes.`;
+        } else if (
+          message.toLowerCase().includes("credit") ||
+          message.toLowerCase().includes("payment")
+        ) {
+          operation = "Payment Required";
+          userMessage = `Out of credits! Add more credits to your account.`;
+        } else if (message.toLowerCase().includes("provider")) {
+          operation = "Provider Error";
+          userMessage = `Provider error: ${message}`;
+          if (providerName) {
+            userMessage = `Provider error (${providerName}): ${message}`;
+          }
+        } else {
+          userMessage = `LLM request failed: ${message}`;
+        }
+    }
+
+    return {
+      code,
+      httpStatus,
+      message,
+      userMessage,
+      operation,
+      providerName,
+      metadata,
+      raw,
+    };
   }
 
   /**
@@ -272,7 +431,7 @@ export class OpenRouterClient {
 
     const lastError = errors.at(-1);
     const failure = new Error(
-      `Image generation failed: ${lastError?.message || "unknown error"}`
+      `Image generation failed: ${lastError?.error.message || "unknown error"}`
     );
     (failure as any).cause = lastError;
     throw failure;

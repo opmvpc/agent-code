@@ -206,7 +206,7 @@ export class ImageGenerationTool extends BaseTool {
       );
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as any; // OpenRouter response is dynamic
     const images = data?.choices?.[0]?.message?.images;
 
     if (!Array.isArray(images) || images.length === 0) {
